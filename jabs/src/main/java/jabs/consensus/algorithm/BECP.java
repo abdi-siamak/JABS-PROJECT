@@ -274,10 +274,9 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         //##### NCP (Node Cache Protocol)#####//
                         this.peerBlockchainNode.gossipMessage(
                                 new GossipMessage(
-                                        new BECPPull<>(this.peerBlockchainNode, peer.getCycleNumber(), getSizeOfBlocks(copyBlockCache), peerValue, peerWeight, copyNeighborCache, copyBlockCache, false, peer.getL(), copiedP, copiedA, copiedC, peer.getCrashedNodes(), peer.getJoinedNodes(), updatedLedger)
+                                		new GossipMessageBuilder().setCycleNumber(peer.getCycleNumber()).setValue(peerValue).setWeight(peerWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(false).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setLocalLedger(updatedLedger).buildPullGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                                 ),sender
                         );
-                		//new GossipMessageBuilder().setCycleNumber(peer.getCycleNumber()).setValue(peerValue).setWeight(peerWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(false).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setLocalLedger(updatedLedger).buildPullGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                         //System.out.println("sent a pull from "+peer.getNodeID()+" to "+ sender.getNodeID()+" at "+ peer.getSimulator().getSimulationTime()); //*
                         //***** SSEP (System Size Estimation Protocol)*****//
                         if(SSEP){
@@ -817,7 +816,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
         //##### ECP(Epidemic Consensus Protocol)#####//
         this.peerBlockchainNode.gossipMessage( // the function getNode() for NCP (Node Cache Protocol).
                 new GossipMessage(
-                        new BECPPush<>(this.peerBlockchainNode, peer.getCycleNumber(), getSizeOfBlocks(copyBlockCache), peerValue, peerWeight, copyNeighborCache, copyBlockCache, peer.getCriticalPushFlag(), false, peer.getL(), copiedP, copiedA, copiedC, peer.getCrashedNodes(), peer.getJoinedNodes(), false)
+                		new GossipMessageBuilder().setCycleNumber(peer.getCycleNumber()).setValue(peerValue).setWeight(peerWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(peer.getCriticalPushFlag()).setIsReceivedPull(false).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                 ), destination);
         simulator.putEvent(new NodeCycleEvent<BECPNode>(peer), BECPScenario.CYCLE_TIME);
         //System.out.println("next event was set to "+simulator.getSimulationTime()+BECPScenario.CYCLETIME+" for node "+peer.getNodeID());
@@ -834,7 +833,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 if(pushEntry.getCycleNumber()<peer.getCycleNumber()){
             		this.peerBlockchainNode.gossipMessage( // perform RePush.
                             new GossipMessage(
-                                    new BECPPush<>(this.peerBlockchainNode, pushEntry.getCycleNumber(), getSizeOfBlocks(copyBlockCache), pushEntry.getAggregationValue(), pushEntry.getAggregationWeight(), copyNeighborCache, copyBlockCache, true, false, peer.getL(), copiedP, copiedA, copiedC, null, null, false)
+                            		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(false).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                             ), pushEntry.getDestination());
                     temp.add(pushEntry);
                     //*System.out.println("sent a RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());//*
@@ -881,7 +880,6 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 		replicaBlockCache.put(becpBlock.getHeight(), replicaBlock);
                 	}
             	}
-            	System.out.print("NEW BRANCH");
             	//------------------------------------- ***** *****
                 peer.getPushEntriesBuffer().add(new PushEntry(destination, peer.getCycleNumber(), PULL_TIMEOUT, peer.getValue(), peer.getWeight(),replicaBlockCache));
             }
@@ -891,7 +889,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 	if(pushEntry.isReceivedPull()) { 
                 		this.peerBlockchainNode.gossipMessage( // perform a RePush.
                                 new GossipMessage(
-                                        new BECPPush<>(this.peerBlockchainNode, pushEntry.getCycleNumber(), getSizeOfBlocks(copyBlockCache), pushEntry.getAggregationValue(), pushEntry.getAggregationWeight(), copyNeighborCache, copyBlockCache, true, pushEntry.isReceivedPull(), peer.getL(), copiedP, copiedA, copiedC, peer.getCrashedNodes(), peer.getJoinedNodes(), false)
+                                		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(pushEntry.isReceivedPull()).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                                 ), pushEntry.getDestination());
                         
                         temp.add(pushEntry);
@@ -899,7 +897,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 	}else if(pushEntry.getTimeout()==0){
                 		this.peerBlockchainNode.gossipMessage( // perform a notification RePush.
                 				new GossipMessage(
-                                        new BECPPush<>(this.peerBlockchainNode, pushEntry.getCycleNumber(), getSizeOfBlocks(copyBlockCache), pushEntry.getAggregationValue(), pushEntry.getAggregationWeight(), copyNeighborCache, copyBlockCache, true, pushEntry.isReceivedPull(), peer.getL(), copiedP, copiedA, copiedC, peer.getCrashedNodes(), peer.getJoinedNodes(), false)
+                                		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(pushEntry.isReceivedPull()).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                 				), pushEntry.getDestination());
                 
                         temp.add(pushEntry);

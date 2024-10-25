@@ -79,11 +79,11 @@ public class BECPScenario extends AbstractScenario{
  private static final double BLOCK_GENERATION_PROBABILITY = 0.05; // Probability of generating blocks.
  private static final boolean SINGLE_PROPOSER = false; // Should only one node propose blocks?
  private static final boolean CRASH = false; // Indicates whether nodes should simulate crashes.
- private static final CrashType crashType = CrashType.UNIFORM; // Indicates type of crash scenarios.
+ private static final CrashType crashType = CrashType.STRESS; // Indicates type of crash scenarios.
  private static final double CRASH_RATE = 0.3; // The rate at which nodes crash during the simulation.
  private static final double CRASH_TIME = 100; //(at cycle 285) The time (in seconds) at which the stress crash scenario occurs.
  private static final boolean NODES_REJOIN = false; // Allows crashed nodes to rejoin the network and resume participation.
- private static final double JOIN_TIME = 200*CYCLE_TIME; // Specifies the duration (in cycles) that nodes must wait to rejoin the network after a crash.
+ private static final double JOIN_TIME = 100*CYCLE_TIME; // Specifies the duration (in cycles) that nodes must wait to rejoin the network after a crash.
  public static final boolean TRACKING = true; // Indicates whether the system should record tracking information.
  private static final double TRACKING_TIME = 10; // Specifies the time interval (in seconds) for recording tracking data.
  // ---------------------------------------------------------------------------------------
