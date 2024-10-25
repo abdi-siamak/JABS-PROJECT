@@ -881,6 +881,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 		replicaBlockCache.put(becpBlock.getHeight(), replicaBlock);
                 	}
             	}
+            	System.out.print("NEW BRANCH");
             	//------------------------------------- ***** *****
                 peer.getPushEntriesBuffer().add(new PushEntry(destination, peer.getCycleNumber(), PULL_TIMEOUT, peer.getValue(), peer.getWeight(),replicaBlockCache));
             }
