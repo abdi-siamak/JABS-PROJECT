@@ -8,7 +8,11 @@ This repository contains a modified version of the [JABS simulator](https://gith
 - **Added an implementation of RAFT**: Implemented the Raft consensus algorithm, designed for easier understandability and practical implementation.
 - **Added an implementation of PBFT**: Implemented Practical Byzantine Fault Tolerance (PBFT) for Byzantine fault tolerance in distributed systems.
 - **Added an implementation of Snow families**: Implemented the Snow family protocols including Slush, Snowflake, Snowball, Avalanche, Snowflake+, and Snowman for scalable and secure consensus.
-- **Added an implementation of DESC (Decentralised Extra-scale Consensus)**: Introduced DESC, also known as BECP (Blockchain Epidemic Consensus Protocol), in my PhD project, including components like SSEP, NCP, REAP, REAP+, and PTP.
+- **Added an implementation of DESC (Decentralised Extra-scale Consensus)**: Introduced DESC, also referred to as BECP (Blockchain Epidemic Consensus Protocol) in the code. It includes:
+  - SSEP (Seed Selection and Epidemic Propagation)
+  - NCP (Node Communication Protocol)
+  - REAP and REAP+ (Robust Epidemic Agreement Protocols)
+  - PTP (Probabilistic Termination Protocol)
 - **Added ARP, an adaptive restart protocol**: Introduced ARP to enable adaptive restart of consensus protocols in dynamic environments.
 - **Added membership protocols EMP and EMP+**: Implemented EMP (Expander Membership Protocol) and its enhanced version EMP+ to handle dynamic membership in decentralised networks.
 - **Added consensus protocol ECP**: Introduced the ECP (Epidemic Consensus Protocol), which is based on the Data Aggregation consensus protocol, for decentralised systems.
