@@ -29,9 +29,10 @@ To install and use this simulator, follow the instructions below:
 
 2. Install Java and Maven if you haven't already:
    [Download and install Java (version 8 or higher)](https://www.oracle.com/java/technologies/javase-jdk11-downloads.html).
+   
    [Install Maven](https://maven.apache.org/install.html).
 
-3. Navigate to the repository directory and build the project with Maven:
+4. Navigate to the repository directory and build the project with Maven:
    ```bash
    cd jabs-modified
    mvn clean install
