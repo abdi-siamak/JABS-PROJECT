@@ -40,8 +40,8 @@ To install and use this simulator, follow the instructions below:
 
 ## Usage
 
-To run the simulator, execute the following command:
-   
+5. To run the simulator, execute the following command:
+   ```bash
    mvn exec:java -Dexec.mainClass="Main"
 
 ## License
