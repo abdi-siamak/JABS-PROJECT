@@ -37,11 +37,11 @@ To install and use this simulator, follow the instructions below:
    ```bash
    cd jabs-modified
    mvn clean install
-  
+
 ## Usage
 
 To run the simulator, execute the following command:
-   ```bash
+   
    mvn exec:java -Dexec.mainClass="Main"
 
 ## License
