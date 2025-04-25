@@ -1,0 +1,1 @@
+/Applications/Eclipse.app/Contents/Eclipse/plugins/org.eclipse.justj.openjdk.hotspot.jre.full.macosx.aarch64_21.0.4.v20240802-1551/jre/bin/javadoc @options @packages

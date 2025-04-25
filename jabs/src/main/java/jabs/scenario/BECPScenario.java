@@ -5,13 +5,13 @@ import jabs.consensus.algorithm.BECP;
 import jabs.consensus.config.BECPConsensusConfig;
 import jabs.ledgerdata.becp.A;
 import jabs.ledgerdata.becp.BECPBlock;
-import jabs.ledgerdata.becp.BECPPush;
 import jabs.ledgerdata.becp.C;
 import jabs.ledgerdata.becp.PushEntry;
 import jabs.ledgerdata.becp.ReplicaBlock;
 import jabs.log.AbstractLogger;
 import jabs.log.BECPCSVLogger;
 import jabs.network.message.GossipMessage;
+import jabs.network.message.GossipMessageBuilder;
 import jabs.ledgerdata.BlockFactory;
 import jabs.network.networks.becp.BECPWANNetwork;
 import jabs.network.node.nodes.becp.BECPNode;
@@ -31,6 +31,10 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
+
 import static jabs.network.node.nodes.becp.BECPNode.BECP_GENESIS_BLOCK;
 /**
  * File: BECPScenario.java
@@ -46,7 +50,7 @@ public class BECPScenario extends AbstractScenario{
  public static final double MAX_LATENCY = WANNetworkStats.MAX_LATENCY; // (D2)(seconds) Maximum propagation delay between any pair of nodes in the network.
  public static final double MAX_SYNC_OFFSET = 0.001; // (D3)(seconds) Maximum synchronization offset between any pair of nodes in the network.
  public static final double CYCLE_TIME = (PUSH_INTERVAL + (2 * MAX_LATENCY) + MAX_SYNC_OFFSET); // (seconds) Next start cycle time.
- private static final int MAX_CYCLES = 99999999; // Maximum cycle number nodes should operate.
+ private static final int MAX_CYCLES = 999999999; // Maximum cycle number nodes should operate.
  // ------------ SSEP & REAP ---------------
  private static final double VALUE_I = 1; // The "v" value of the leader node.
  private static final double WEIGHT_I = 1; // The "w" value of the leader node.
@@ -72,18 +76,19 @@ public class BECPScenario extends AbstractScenario{
  public static final double P_V_I = 1; // vi value of a p.
  public static final double P_W_I = 1; // wi value of a p.
  // ----------------------------------------
+ public static final int NEIGHBOR_CACHE_SIZE = 100; //(NCP, EMP+)-Q_max, the maximum size of neighbor local cache.
  public static final boolean CONTINUOUS_BLOCK_GENERATION = true; // Should nodes generate blocks continuously?
  private static final int BLOCK_GENERATION_INTERVAL = 29; // Interval between two block generations in cycles. (10 seconds = 29 cycles)
  private static final int MAX_BLOCKS_IN_LEDGERS = 99999999; // Maximum number of blocks in local ledgers (max blocks generated).
  private static final boolean RANDOM_BLOCK_GENERATION = true; // Should nodes generate blocks with a probability?
- private static final double BLOCK_GENERATION_PROBABILITY = 0.05; // Probability of generating blocks.
+ private static final double BLOCK_GENERATION_PROBABILITY = 1; // Probability of generating blocks.
  private static final boolean SINGLE_PROPOSER = false; // Should only one node propose blocks?
  private static final boolean CRASH = false; // Indicates whether nodes should simulate crashes.
- private static final CrashType crashType = CrashType.STRESS; // Indicates type of crash scenarios.
+ private static final CrashType crashType = CrashType.UNIFORM; // Indicates type of crash scenarios.
  private static final double CRASH_RATE = 0.3; // The rate at which nodes crash during the simulation.
  private static final double CRASH_TIME = 100; //(at cycle 285) The time (in seconds) at which the stress crash scenario occurs.
  private static final boolean NODES_REJOIN = false; // Allows crashed nodes to rejoin the network and resume participation.
- private static final double JOIN_TIME = 100*CYCLE_TIME; // Specifies the duration (in cycles) that nodes must wait to rejoin the network after a crash.
+ private static final double JOIN_TIME = 500; // Specifies the duration (in cycles) that nodes must wait to rejoin the network after a crash.
  public static final boolean TRACKING = true; // Indicates whether the system should record tracking information.
  private static final double TRACKING_TIME = 10; // Specifies the time interval (in seconds) for recording tracking data.
  // ---------------------------------------------------------------------------------------
@@ -92,7 +97,6 @@ public class BECPScenario extends AbstractScenario{
  	RandomnessEngineAdapter adapter;
     public static int numOfNodes; 
     private final double simulationStopTime;
-    private final int neighborCacheSize; //(NCP)-Q_max, the maximum size of neighbour local cache.
     private static PrintWriter writer;
     public static File directory;
     private static HashMap<Integer, ArrayList<Double>> estimations = new HashMap<>();
@@ -107,11 +111,10 @@ public class BECPScenario extends AbstractScenario{
         STRESS
     }
     
-    public BECPScenario(String name, long seed, int numOfNodes, double simulationStopTime, int neighborCacheSize) {
+    public BECPScenario(String name, long seed, int numOfNodes, double simulationStopTime) {
         super(name, seed);
         BECPScenario.numOfNodes = numOfNodes;
         this.simulationStopTime = simulationStopTime;
-        this.neighborCacheSize = neighborCacheSize;
         consensusTimes.clear();
         estimations.clear();
         peerBlockMap.clear();
@@ -120,6 +123,9 @@ public class BECPScenario extends AbstractScenario{
         this.adapter = new RandomnessEngineAdapter(this.randomnessEngine);
         if(CRASH) {
             directory = new File("output/BECP-crash_tests/"+crashType.toString()+"/"+CRASH_RATE+"/"+"BECP-" + "seed_" + seed + "-numOfNodes_" + numOfNodes + "-simulationTime_" + (int)simulationStopTime+"/");
+            if(NODES_REJOIN) {
+                directory = new File("output/BECP-crash_tests/"+crashType.toString()+"/"+CRASH_RATE+"/"+JOIN_TIME+"/"+"BECP-" + "seed_" + seed + "-numOfNodes_" + numOfNodes + "-simulationTime_" + (int)simulationStopTime+"/");
+            }
         }else if(WANNetworkStats.DISTRIBUTION==WANNetworkStats.LatencyDistribution.PARETO) {
         	directory = new File("output/BECP-pareto_test/"+"/"+WANNetworkStats.alpha+"/"+"BECP-" + "seed_" + seed + "-numOfNodes_" + numOfNodes + "-simulationTime_" + (int)simulationStopTime+"/");
         }else {
@@ -146,7 +152,7 @@ public class BECPScenario extends AbstractScenario{
     @Override
     public void createNetwork() {
         network = new BECPWANNetwork(this.randomnessEngine);
-        network.populateNetwork(simulator, numOfNodes, new BECPConsensusConfig(), neighborCacheSize, VALUE_I, WEIGHT_I, VALUE, WEIGHT, V_DATA_AGGREGATION, W_DATA_AGGREGATION, V_DATA_CONVERGENCE, V_DATA_AGREEMENT, WEIGHT_VALUE);
+        network.populateNetwork(simulator, numOfNodes, new BECPConsensusConfig(), NEIGHBOR_CACHE_SIZE, VALUE_I, WEIGHT_I, VALUE, WEIGHT, V_DATA_AGGREGATION, W_DATA_AGGREGATION, V_DATA_CONVERGENCE, V_DATA_AGREEMENT, WEIGHT_VALUE);
     }
 
     @Override
@@ -212,12 +218,41 @@ public class BECPScenario extends AbstractScenario{
             ArrayList<BECPNode> copyNeighborCache = null;
             BECPNode destination = null;
             if (BECP.NCP) {
-                trimCache(neighborCacheSize, node.getNeighborsLocalCache());
+                trimCache(NEIGHBOR_CACHE_SIZE, node.getNeighborsLocalCache());
                 destination = getRandomNeighbor(node); // the function getNode() for NCP (Node Cache Protocol).
                 copyNeighborCache = new ArrayList<>(node.getNeighborsLocalCache()); // send a copy of neighborsLocalCache.
                 copyNeighborCache.remove(destination);
             }
             //##### NCP (Node Cache Protocol)#####//
+            Multimap<BECPNode, Integer> copyMainCache_s = null;
+            if (BECP.EMP) {
+            	destination = getRandomNeighbor(node); 
+                copyNeighborCache = new ArrayList<>(node.getNeighborsLocalCache());
+            }
+            //***** EMP+ (Enhanced Expander Membership Protocol)*****//
+            if(BECP.EMP_PLUS) {
+            	BECP nodeConsensus = (BECP) node.getConsensusAlgorithm();
+                nodeConsensus.IMPs.put(node.getCycleNumber(), false);
+            	removeExpiredEntries(node, node.getHistoryCache(), BECP.HL);
+            	long currentCycle = node.getCycleNumber();
+            	Map.Entry<BECPNode, Integer> oldestEntry = node.getMainCache() // get the oldest node from main cache
+            		    .entries()
+            		    .stream()
+            		    .max((e1, e2) -> Long.compare(
+            		        currentCycle - e1.getValue(), 
+            		        currentCycle - e2.getValue()  
+            		    )) 
+            		    .orElse(null);
+
+            	if (oldestEntry != null) {
+            	    destination = oldestEntry.getKey();
+            	} else {
+            	    throw new Error("destination is null!");
+            	}
+            	copyMainCache_s = ArrayListMultimap.create();
+            	copyMainCache_s.putAll(node.getMainCache());
+            }
+            //##### EMP+ (Enhanced Expander Membership Protocol)#####//
             BECPBlock newBlock = null;
             HashMap<Integer, BECPBlock> copyBlockCache = new HashMap<>();
             //***** ECP(Epidemic Consensus Protocol) & PTP(Phase Transition Protocol)*****//
@@ -240,14 +275,12 @@ public class BECPScenario extends AbstractScenario{
                 copyBlockCache = initializeBlockLocalCache(node, newBlock);
             }
             //##### ECP(Epidemic Consensus Protocol) & PTP(Phase Transition Protocol)#####//
-            node.gossipMessage(
-                    new GossipMessage(
-                            new BECPPush<>(node, node.getCycleNumber(), getSizeOfBlocks(copyBlockCache), nodeValue, nodeWeight, copyNeighborCache, copyBlockCache, node.getCriticalPushFlag(), false, node.getL(), copiedP, copiedA, copiedC, node.getCrashedNodes(), node.getJoinedNodes(), false)
-                    ), destination
-            );
+            //***** Perform PUSH *****//
+            performPush(node, destination, nodeValue, nodeWeight, copyNeighborCache, copyBlockCache, copyMainCache_s);
+            //##### Perform PUSH #####//
             simulator.putEvent(new NodeCycleEvent<BECPNode>(node), CYCLE_TIME);
             //System.out.println("next event was set to "+simulator.getSimulationTime()+BECPScenario.CYCLETIME+" for node "+node.getNodeID());
-            //*System.out.println("Initializing, sent a push from "+node.getNodeID()+" to "+destination.getNodeID()+" for cycle "+node.getCycleNumber());//*
+            //*System.out.println("Initializing, sent a push from "+node.getNodeID()+" to "+destination.getNodeID()+" for cycle "+node.getCycleNumber());
             //***** REAP (Robust Epidemic Aggregation Protocol)*****//
             if (BECP.REAP||BECP.REAP_PLUS) {
                 if(node.getCriticalPushFlag()){ // insert critical push in PushEntriesBuffer.
@@ -274,6 +307,115 @@ public class BECPScenario extends AbstractScenario{
         	//System.out.println("Push Entry cache size is "+node.getPushEntriesBuffer().size()+ " for node "+ node.nodeID);
         }
     }
+
+	private void performPush(final BECPNode node, final BECPNode destination, final double nodeValue, final double nodeWeight, final ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache, final Multimap<BECPNode, Integer> copyCache_s) {
+        if(BECP.REAP_PLUS&&BECP.NCP) {
+        	node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(node.getCriticalPushFlag())
+                    		.setIsReceivedPull(false)
+                    		.setCrashedNodes(node.getCrashedNodes())
+                    		.setJoinedNodes(node.getJoinedNodes())
+                    		.setIsNewJoined(false)
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(BECP.REAP_PLUS&&BECP.EMP_PLUS) {
+        	node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(node.getCriticalPushFlag())
+                    		.setIsReceivedPull(false)
+                    		.setCrashedNodes(node.getCrashedNodes())
+                    		.setJoinedNodes(node.getJoinedNodes())
+                    		.setIsNewJoined(false)
+                    		.setMainCache_S(copyCache_s)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(BECP.REAP&&BECP.NCP) {
+            node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(node.getCriticalPushFlag())
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(BECP.REAP&&BECP.EMP_PLUS) {
+        	node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(node.getCriticalPushFlag())
+                    		.setMainCache_S(copyCache_s)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(BECP.SSEP&&BECP.NCP) {
+        	node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(BECP.SSEP&&BECP.EMP_PLUS) {
+        	node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setMainCache_S(copyCache_s)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if (BECP.SSEP&&BECP.EMP) {
+        	node.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(node.getCycleNumber())
+                    		.setValue(nodeValue)
+                    		.setWeight(nodeWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        }
+	}
+	
+	private void removeExpiredEntries(BECPNode node, Multimap<BECPNode, Integer> historyCache, int hl) {
+	    historyCache.entries().removeIf(entry -> (node.getCycleNumber()-entry.getValue()) > hl);
+	}
 
 	@Override
     public void run() throws IOException {
@@ -314,7 +456,7 @@ public class BECPScenario extends AbstractScenario{
                     			node.isCrashed=true;
                     			nodesToBeCrashed.remove(node);
                     			if(NODES_REJOIN) {
-                    				simulator.putEvent(new NodeCycleEvent<BECPNode>(node), JOIN_TIME); // create an event to rejoin the node.
+                    				simulator.putEvent(new NodeCycleEvent<BECPNode>(node), (JOIN_TIME*CYCLE_TIME)); // create an event to rejoin the node.
                     			}
                     			//System.out.println("Node "+node.nodeID+ " was crashed at cycle "+node.getCycleNumber()+" and simulation time "+node.getSimulator().getSimulationTime());
                     			continue;
@@ -326,7 +468,7 @@ public class BECPScenario extends AbstractScenario{
             			node.crash();
             			node.isCrashed=true;
             			node.addCycleNumber(+1);
-            			simulator.putEvent(new NodeCycleEvent<BECPNode>(node), JOIN_TIME); //sets the rejoining time.
+            			simulator.putEvent(new NodeCycleEvent<BECPNode>(node), (JOIN_TIME*CYCLE_TIME)); //sets the rejoining time.
             			System.out.println("Node "+node.nodeID+ " was crashed "+node.getCycleNumber());
             			continue;
             		}
@@ -392,30 +534,30 @@ public class BECPScenario extends AbstractScenario{
         			startNewCycle(node);
         			if(TRACKING&&(simulationTime>recordTime)) {
         				recordTime = recordTime + TRACKING_TIME;
-                    	int currentThroughput=0;
                         double Mv = 0;
                     	double Mw = 0;
-                    	ArrayList<Double> actualSystemSize = new ArrayList<>();
+                    	ArrayList<Double> estimatedSystemSize = new ArrayList<>();
+                    	ArrayList<Integer> currentThroughput = new ArrayList<>();
                         for (BECPNode peer : (List<BECPNode>) network.getAllNodes()) {
                             if (!peer.isCrashed) {
-                            	currentThroughput = peer.getLastConfirmedBlock().getHeight();
+                            	currentThroughput.add(peer.getLastConfirmedBlock().getHeight());
                             	Mv = Mv + peer.getValue();
                                 Mw = Mw + peer.getWeight();
-                                actualSystemSize.add(peer.getEstimation());
+                                estimatedSystemSize.add(peer.getEstimation());
                             }
                         }
                         double error_v = Double.valueOf(numOfNodes)-Mv;
                         double error_w = 1.0-Mw;
-                        //System.out.println("Mv:"+Mv+", Mw:"+Mw+", est:"+Mv/Mw+", error_v:"+error_v+", error_w:"+error_w, actualSystemSize);
+                        //System.out.println("Mv:"+Mv+", Mw:"+Mw+", est:"+Mv/Mw+", error_v:"+error_v+", error_w:"+error_w, estimatedSystemSize);
                         ArrayList<Double> data = new ArrayList<>();
-                        data.add(Double.valueOf(currentThroughput));
+                        data.add(currentThroughput.stream().mapToInt(Integer::intValue).average().orElse(0.0));
                         data.add(getAverageConsensusTime());
                         data.add(Double.valueOf(BECPCSVLogger.numMessage));
                         data.add(Double.valueOf(BECPCSVLogger.messageSize));
                         data.add(Mv);
                         data.add(Mw);
                         data.add(Mv/Mw);
-                        data.add(actualSystemSize.stream().mapToDouble(Double::doubleValue).average().orElse(0.0));
+                        data.add(estimatedSystemSize.stream().mapToDouble(Double::doubleValue).average().orElse(0.0));
                     	records.put(simulationTime, data);
                     }
         		}
@@ -445,17 +587,19 @@ public class BECPScenario extends AbstractScenario{
             logger.finalLog();
         }
         System.err.printf("Finished %s.\n", this.name+"-Number of Nodes:"+this.numOfNodes+"-Simulation Time:"+this.simulationStopTime);
-        for (BECPNode randomNode : (List<BECPNode>) network.getAllNodes()) {
-            if (!randomNode.isCrashed) {
+        ArrayList<Integer> heights = new ArrayList<>();
+        for (BECPNode becpNode : (List<BECPNode>) network.getAllNodes()) {
+        	if (!becpNode.isCrashed) {
             	//System.out.println("random node is: "+randomNode.nodeID);
-                Main.averageBlockchainHeights.add(randomNode.getLastConfirmedBlock().getHeight());
+        		heights.add(becpNode.getLastConfirmedBlock().getHeight());
                 break;
             }
         }
+        Main.averageBlockchainHeights.add((int) heights.stream().mapToInt(Integer::intValue).average().orElse(0.0));
         
         if(TRACKING) {
         	try (BufferedWriter writer = new BufferedWriter(new FileWriter(directory+"/trackingRecords.txt"))) {
-        		writer.write("simulation_time, throughput, latency, #of_messages, message_size, Mv, Mw, system_size, actual_system_size");
+        		writer.write("simulation_time, throughput, latency, #of_messages, message_size, Mv, Mw, Mv/Mw, estimated_system_size");
         		writer.newLine();
         		for (Map.Entry<Double, ArrayList<Double>> entry : records.entrySet()) {
                     Double key = entry.getKey();
@@ -483,6 +627,7 @@ public class BECPScenario extends AbstractScenario{
         testBlockchain();
         //calculateMPE();
         //calculateVAR();
+        System.out.println(BECP.count);
     }
 	
     private void join(BECPNode node) {
@@ -496,7 +641,7 @@ public class BECPScenario extends AbstractScenario{
 		node.getCrashedNodes().clear();
 		node.setValue(0);
 		node.setWeight(0);
-		trimCache(neighborCacheSize, node.getNeighborsLocalCache());
+		trimCache(NEIGHBOR_CACHE_SIZE, node.getNeighborsLocalCache());
         BECPNode destination = getRandomNeighbor(node); 
         ArrayList<BECPNode> copyNeighborCache = new ArrayList<>(node.getNeighborsLocalCache()); 
         copyNeighborCache.remove(destination);
@@ -504,7 +649,7 @@ public class BECPScenario extends AbstractScenario{
         //*******************************
 		node.gossipMessage( // sends an update request message to a random neighbour.
                 new GossipMessage(
-                        new BECPPush<>(node, node.getCycleNumber(), getSizeOfBlocks(copyBlockCache), node.getValue(), node.getWeight(), copyNeighborCache, copyBlockCache, false, false, node.getL(), null, null, null, node.getCrashedNodes(), node.getJoinedNodes(), true)
+                		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(node.getValue()).setWeight(node.getWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(false).setIsReceivedPull(false).setCrashedNodes(node.getCrashedNodes()).setJoinedNodes(node.getJoinedNodes()).setIsNewJoined(true).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
                 ),destination
         );
 		simulator.putEvent(new NodeCycleEvent<BECPNode>(node), CYCLE_TIME);
@@ -823,14 +968,20 @@ public class BECPScenario extends AbstractScenario{
      * @return A neighboring BECPNode selected randomly for gossiping.
      */
     private BECPNode getRandomNeighbor(final BECPNode peer) {
-    	BECPNode randomNeighbor;
-    	ArrayList<BECPNode> cache = peer.getNeighborsLocalCache();
-        randomNeighbor = cache.get(this.randomnessEngine.nextInt(cache.size())); // pick a random node to gossip.
-        if(randomNeighbor==peer) {
-        	System.out.println("destination is the same as the sender!");
-        	return null;
+        ArrayList<BECPNode> cache = peer.getNeighborsLocalCache();
+
+        if (cache == null || cache.isEmpty()) {
+            System.out.println("No valid neighbors available!");
+            return null;
         }
-        
+
+        BECPNode randomNeighbor = cache.get(randomnessEngine.nextInt(cache.size())); // pick a random node to gossip
+
+        if (randomNeighbor == peer) {
+            System.out.println("Destination is the same as the sender!");
+            return null;
+        }
+
         return randomNeighbor;
     }
     /**

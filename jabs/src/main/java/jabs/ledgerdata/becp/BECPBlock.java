@@ -107,6 +107,7 @@ public class BECPBlock extends SingleParentBlock<BECPBlock> implements Cloneable
 	public void setLeader(int leader) {
 		this.leader = leader;
 	}
+	
     public void setCreationTime(double time) {
         this.creationTime = time;
     }

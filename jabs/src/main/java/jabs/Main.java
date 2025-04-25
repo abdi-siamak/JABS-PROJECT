@@ -100,12 +100,10 @@ public class Main {
         directory = RAFTScenario.directory;
         */
         
-        for (int s = 1; s <= 1; s++) {
+        for (int s = 1; s <= 5; s++) {
             //Simulate BECP WAN network and Bitcoin network
-            scenario = new BECPScenario("Simulation of a BECP WAN Network", s, 200,
-                    600, 100);
-            //scenario = new BECPBitcoinNetworkScenario("One hour of a BECP Bitcoin Network", 1,
-            //        3600, 50);
+            scenario = new BECPScenario("Simulation of a BECP WAN Network", s, 10000, 300);
+            //scenario = new BECPBitcoinNetworkScenario("One hour of a BECP Bitcoin Network", 1, 3600);
             scenario.AddNewLogger(new BECPCSVLogger(Paths.get(BECPScenario.directory+"/becp-simulation-log.csv")));
             scenario.run();
             averageNumberOfSentMessages.add(BECPCSVLogger.numMessage);
@@ -120,7 +118,7 @@ public class Main {
         /*
         for (int s = 1; s <= 1; s++) {
             // Simulate Avalanche WAN network
-            scenario = new AvalancheScenario("Simulation of an Avalanche WAN Network", s, 5000,
+            scenario = new AvalancheScenario("Simulation of an Avalanche WAN Network", s, 100,
                     300);
             scenario.AddNewLogger(new SnowCSVLogger(Paths.get(AvalancheScenario.directory+"/avalanche-simulation-log.csv")));
             scenario.run();
@@ -131,18 +129,21 @@ public class Main {
         directory = AvalancheScenario.directory;
         */
         /*
-        for (int s = 1; s <= 1; s++) {
-            // Simulate Snow WAN network and Bitcoin network
-            scenario = new SnowScenario("Simulation of a Snowball WAN Network", s, 100,
-                    3600);
-            //scenario = new SnowBitcoinNetworkScenario("One hour of a Snowball Bitcoin Network", 1,
+        for (int s = 1; s <= 5; s++) {
+            // Simulate Snow + WAN network and Bitcoin network
+            scenario = new SnowScenario("Simulation of a Snow family WAN Network", s, 5000,
+                    300);
+            //scenario = new SnowBitcoinNetworkScenario("One hour of a Snowflake+ Bitcoin Network", 1,
             //        3600);
-            scenario.AddNewLogger(new SnowCSVLogger(Paths.get("output/snowball-simulation-log.csv")));
+            scenario.AddNewLogger(new SnowCSVLogger(Paths.get(SnowScenario.directory+"/snowflake+-simulation-log.csv")));
             scenario.run();
-            System.out.println("total number of sent messages: "+ SnowCSVLogger.numMessage);
-            System.out.println("total size of sent messages: "+SnowCSVLogger.messageSize+" (bytes)");
+            averageNumberOfSentMessages.add(SnowCSVLogger.numMessage);
+            averageSizeOfSentMessages.add(SnowCSVLogger.messageSize);
+            averageConsensusDurationTimes.add(SnowScenario.getAverageConsensusTime());
         }
+        directory = SnowScenario.directory;
         */
+        
         writeMeasures();
         calculateAverage();
     }

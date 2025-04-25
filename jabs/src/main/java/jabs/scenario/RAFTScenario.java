@@ -228,14 +228,14 @@ public class RAFTScenario extends AbstractScenario {
         			}
                		if(TRACKING&&(simulationTime>recordTime)) {
         				recordTime = recordTime + TRACKING_TIME;
-                    	int currentThroughput=0;
+        				ArrayList<Integer> currentThroughput = new ArrayList<>();
                         for (RAFTNode peer : (List<RAFTNode>) network.getAllNodes()) {
                             if (!peer.isCrashed) {
-                            	currentThroughput = peer.getLastConfirmedBlockID();
+                            	currentThroughput.add(peer.getLastConfirmedBlockID());
                             }
                         }
                         ArrayList<Double> data = new ArrayList<>();
-                        data.add(Double.valueOf(currentThroughput));
+                        data.add(currentThroughput.stream().mapToInt(Integer::intValue).average().orElse(0.0));
                         data.add(getAverageConsensusTime());
                         data.add(Double.valueOf(RAFTCSVLogger.numMessage));
                         data.add(Double.valueOf(RAFTCSVLogger.messageSize));
@@ -277,6 +277,13 @@ public class RAFTScenario extends AbstractScenario {
                 break;
             }
         }
+        ArrayList<Integer> heights = new ArrayList<>();
+        for (RAFTNode raftNode : (List<RAFTNode>) network.getAllNodes()) {
+        	//System.out.println("random node is: "+randomNode.nodeID);
+    		heights.add(raftNode.getLastConfirmedBlockID());
+        }
+        Main.averageBlockchainHeights.add((int) heights.stream().mapToInt(Integer::intValue).average().orElse(0.0));
+        
         if(WRITE_LOCAL_LEDGERS) {
         	this.writeLocalLedger();
         }

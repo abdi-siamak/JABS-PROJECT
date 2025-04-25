@@ -354,18 +354,21 @@ public class Avalanche<B extends Block<B>, T extends Tx<T>> extends AbstractDAGB
 	        if (tx != AVALANCHE_GENESIS_TX) {
 	        	if(!this.getLocalTxDAG().isAccepted(tx)) {
 		            if (isAccepted(peer, tx)) { // a consensus occurs!
-		            	//System.out.println("A consensus occurred on transaction "+tx.getHeight());
-                    	AvalancheScenario.consensusTimes.add(peer.getSimulator().getSimulationTime()-tx.getCreationTime()); // record the consensus time.
-		            	this.getLocalTxDAG().setAcceptance(tx, true);
-		            	if(AvalancheScenario.RECORD_LOCAL_LEDGERS) {
-		            		peer.getLocalLedger().add(tx); // add to the local chain ledger.
+		            	if(!this.confirmedTxs.contains(tx)) {
+		            		//System.out.println("A consensus occurred on transaction "+tx.getHeight());
+		            		this.confirmedTxs.add((T) tx);
+		            		AvalancheScenario.consensusTimes.add(peer.getSimulator().getSimulationTime()-tx.getCreationTime()); // record the consensus time.
+			            	this.getLocalTxDAG().setAcceptance(tx, true);
+			            	if(AvalancheScenario.RECORD_LOCAL_LEDGERS) {
+			            		peer.getLocalLedger().add(tx); // add to the local chain ledger.
+			            	}
+		            		if(tx.getHeight()>peer.getLastConfirmedTx().getHeight()) {
+			            		peer.setLastConfirmedTx(tx); // update the highest ID of accepted transactions.
+			            	}
+			                if (WRITE_ACCEPTED_LOGS) {
+			                    writeLogs(tx, peer);
+			                }
 		            	}
-	            		if(tx.getHeight()>peer.getLastConfirmedTx().getHeight()) {
-		            		peer.setLastConfirmedTx(tx); // update the highest ID of accepted transactions.
-		            	}
-		                if (WRITE_ACCEPTED_LOGS) {
-		                    writeLogs(tx, peer);
-		                }
 		            }
 	        	}
 	        }

@@ -1,6 +1,6 @@
 package jabs.scenario;
 
-import jabs.Main;
+import jabs.Main; 
 import jabs.consensus.algorithm.Avalanche;
 import jabs.consensus.config.SnowConsensusConfig;
 import jabs.ledgerdata.TransactionFactory;
@@ -44,11 +44,11 @@ public class AvalancheScenario extends AbstractScenario{
  // Transaction Generation and Block Proposal Configuration
  // ---------------------------------------------------------------------------------------
  private static final boolean GENERATE_TX = true; // Should nodes generate transactions?
- private static final boolean SINGLE_PROPOSER = false; // Should only one node propose blocks?
+ private static final boolean SINGLE_PROPOSER = false; // Should only one node propose transactions?
  private static final int TX_GENERATION_INTERVAL = 10; // Interval between two transaction generations in seconds.
  private static final int MAX_TX_GENERATION = 9999999; // Maximum number of transactions nodes should generate (Each transaction needs one subsequent transaction to be accepted).
  private static final boolean RANDOM_TX_GENERATION = true; // Should nodes generate blocks with a probability?
- private static final double TX_GENERATION_PROBABILITY = 0.05; // Probability of generating blocks.
+ private static final double TX_GENERATION_PROBABILITY = 0.05; // Probability of generating transactions.
  private static final boolean UNIFORM_CRASH = false; // Should nodes simulate crashes?
  private static final boolean STRESS_CRASH = false; // Indicates another crash scenario where nodes crash simultaneously.
  private static final double CRASH_TIME = 100d; // The time at which the stress crash scenario occurs.
@@ -157,6 +157,7 @@ public class AvalancheScenario extends AbstractScenario{
 		if(parents.size()>0) {
 			//System.out.println(parents.get(0).getHeight());
 			newTx = TransactionFactory.sampleAvalancheTransaction(simulator, randomnessEngine, node, parents, consensus.localTxDAG.getHighestTransactionID());
+    		//System.out.println("transaction ID: "+newTx.getHeight()+", creator: "+newTx.getCreator().getNodeID()+" generated at "+simulator.getSimulationTime());
 			node.setLastGeneratedTX(newTx); // Update the last generated transaction in the node.
 			consensus.onReceiveTx(node, newTx); // Notify the consensus algorithm about the new transaction.
 		}
@@ -342,14 +343,14 @@ public class AvalancheScenario extends AbstractScenario{
                     
                     if(TRACKING&&(simulationTime>recordTime)) {
         				recordTime = recordTime + TRACKING_TIME;
-                    	int currentThroughput=0;
+        				ArrayList<Integer> currentThroughput = new ArrayList<>();
                         for (AvalancheNode peer : (List<AvalancheNode>) network.getAllNodes()) {
                             if (!peer.isCrashed) {
-                            	currentThroughput = peer.getLastConfirmedTx().getHeight();
+                            	currentThroughput.add(peer.getLastConfirmedTx().getHeight());
                             }
                         }
                         ArrayList<Double> data = new ArrayList<>();
-                        data.add(Double.valueOf(currentThroughput));
+                        data.add(currentThroughput.stream().mapToInt(Integer::intValue).average().orElse(0.0));
                         data.add(getAverageConsensusTime());
                         data.add(Double.valueOf(SnowCSVLogger.numMessage));
                         data.add(Double.valueOf(SnowCSVLogger.messageSize));
@@ -406,12 +407,13 @@ public class AvalancheScenario extends AbstractScenario{
             writer.flush();
         }
         System.err.printf("Finished %s.\n", this.name+"-Number of Nodes:"+this.numOfNodes+"-Simulation Time:"+this.simulationStopTime);
-        for (AvalancheNode randomNode : (List<AvalancheNode>) network.getAllNodes()) {
-            if (!randomNode.isCrashed) {
-                Main.averageBlockchainHeights.add(randomNode.getLastConfirmedTx().getHeight());
-                break;
-            }
+        ArrayList<Integer> heights = new ArrayList<>();
+        for (AvalancheNode avalancheNode : (List<AvalancheNode>) network.getAllNodes()) {
+        	//System.out.println("random node is: "+randomNode.nodeID);
+    		heights.add(avalancheNode.getLastConfirmedTx().getHeight());
         }
+        Main.averageBlockchainHeights.add((int) heights.stream().mapToInt(Integer::intValue).average().orElse(0.0));
+        
         if(TRACKING) {
         	try (BufferedWriter writer = new BufferedWriter(new FileWriter(directory+"/trackingRecords.txt"))) {
         		writer.write("simulation_time, throughput, latency, #of_messages, message_size");

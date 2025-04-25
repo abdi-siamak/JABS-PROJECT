@@ -1,0 +1,27 @@
+-classpath
+'/Users/siamakabdi/.m2/repository/org/apache/commons/commons-math3/3.6.1/commons-math3-3.6.1.jar:/Users/siamakabdi/.m2/repository/de/siegmar/fastcsv/2.1.0/fastcsv-2.1.0.jar'
+-encoding
+'UTF-8'
+-private
+-source
+'17'
+-sourcepath
+'/Users/siamakabdi/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/Home/git/JABS-Project/jabs/src/main/java:/Users/siamakabdi/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/Home/git/JABS-Project/jabs/target/generated-sources/annotations'
+-author
+-bottom
+'Copyright &#169; 2024. All rights reserved.'
+-charset
+'UTF-8'
+-d
+'/Users/siamakabdi/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/Home/git/JABS-Project/jabs/javadoc'
+-docencoding
+'UTF-8'
+-doctitle
+'jabs 0.2.0 API'
+-nohelp
+-noqualifier
+'all'
+-use
+-version
+-windowtitle
+'jabs 0.2.0 API'

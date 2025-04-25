@@ -1,6 +1,6 @@
 package jabs.consensus.algorithm;
 
-import jabs.consensus.blockchain.LocalBlockTree;
+import jabs.consensus.blockchain.LocalBlockTree; 
 import jabs.ledgerdata.*;
 import jabs.ledgerdata.becp.*;
 import jabs.ledgerdata.becp.Process;
@@ -17,9 +17,12 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 /**
  * File: BECP.java
- * Description: Implements BECP protocol for JABS blockchain simulator.
+ * Description: Implements BECP system for JABS blockchain simulator.
  * Author: Siamak Abdi
  * Date: January 30, 2024
  */
@@ -28,18 +31,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
     
     //---------------------------------------------------------------------------------------------
     /**
-     * BECP Protocol Settings:
-     * Available protocol combinations:
-     * - SSEP & NCP
-     * - SSEP & NCP & PTP
-     * - SSEP & NCP & ECP
-     * - REAP/REAP+ & NCP
-     * - REAP/REAP+ & NCP & PTP
-     * - REAP/REAP+ & NCP & ECP
-     * - ARP & NCP
-     * - ARP & NCP & PTP
-     * - ARP & NCP & ECP
-     */
+     * BECP System Settings:
 	/**
 	 * Configuration for recommender parameters:
 	 * For SSEP, REAP, REAP+, and ECP:
@@ -57,25 +49,39 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 	 * For Pareto latency:
 	 * - REPUSH_TIMEOUT: 9
 	 * - PULL_TIMEOUT: 8
+	 * 
+	 * For EMP+:
+	 * 
+	 * 
+	 * 
+	 * 
 	 */
-    public static final boolean SSEP = false; // System Size Protocol (estimation protocol)
+	//----------Estimation Protocols---------------
+    public static final boolean SSEP = true; // System Size Protocol (estimation protocol)
     public static final boolean REAP = false; // Robust Epidemic Aggregation Protocol (estimation and fail detection protocol) [Note: Still not functional for consensus]
-    public static final boolean REAP_PLUS = true;
+    public static final boolean REAP_PLUS = false; // Robust Epidemic Aggregation Protocol-Plus
     public static final boolean ARP = false; // Adaptive Restart Protocol (an adaptive restart mechanism for continuous epidemic systems)
+    //----------Membership Protocols---------------
     public static final boolean NCP = true; // Node Cache Protocol
+    public static final boolean EMP = false; // Expander Membership Protocol
+    public static final boolean EMP_PLUS = false; // Expander Membership Protocol-Plus
+    //----------Consensus Protocols----------------
     public static final boolean PTP = true; // Phase Transition Protocol (Information Dissemination consensus protocol)
-    public static final boolean ECP = false; // Epidemic Consensus Protocol (Data Aggregation consensus protocol)
+    public static final boolean ECP = false; // Epidemic Consensus Protocol (Data Aggregation consensus protocol)-Maximum number of blocks should be 1.
     //--------------------------------------------------------------------------------------------------
     private static final double EPSILON_1 = 0.05d; // (ECP, REAP, PTP, ARP) - Error value (epsilon) for estimation.
     private static final double EPSILON_2 = 0.05d; // (ECP, ARP) - Error value (epsilon) for estimation.
     private static final int MIN_CONSECUTIVE_CYCLES_THRESHOLD = 5; // (ECP, REAP, PTP, ARP) - Minimum number of consecutive cycles threshold.
     private static final int REPUSH_TIMEOUT = 2; // (REAP & REAP+ protocols) - Maximum timeout value in cycles. (minimum value should = 2)
     public static final int PULL_TIMEOUT = 1; // (REAP+ protocol) - Maximum wait time value in cycles for a Pull message (PULL_TIMEOUT < REPUSH_TIMEOUT).
-    public static final int QUEUE_SIZE = 10; // (ECP, REAP, ARP) - Length of the history queue.
+    public static final int QUEUE_SIZE = 10; // (ECP, REAP, ARP)
     public static final int NUMBER_OF_PROCESSES = 5; // (ARP) - Number of processes working in parallel.
     public static final int WAIT_INFORM_TIME = 5; // (REAP+) Duration (in cycles) a node should wait before informing others with the corrected system size.
+    public static final int HL = 2; // (EMP+) History cache item lifetime (number of cycles)
+    private static final int H_MAX = 5; // (EMP+) Maximum number of hops in random walks
+    private static final int R_MAX = 100; // (EMP+) Maximum reserve cache size
     //--------------------------------------------------------------------------------------------------
-    private static final boolean WRITE_CONSENSUS_LOGS = false; // Write logs for the occurring consensus.
+    private static final boolean WRITE_CONSENSUS_LOGS = true; // Write logs for the occurring consensus.
     private static final boolean RECORD_LEDGERS = true; // Record logs for the local ledgers.
     public static final boolean WRITE_SIMULATION_LOGS = false;
     //----------------------------------------------------------------------------------------------------------------------------
@@ -87,21 +93,26 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
    	private int unchangedLeaderCyclesECP;
    	private int convergenceCyclesECP;
    	private int agreementCyclesECP;
-   	private int lastTimeLeader=-1; //(ECP)
+   	private int lastTimeLeader = -1; //(ECP)
     private int aggregationCyclesARP; 
 	private int consensusCyclesARP;
 	private HashMap<BECPBlock, Integer> propagationCyclesPTP = new HashMap<>(); //(PTP protocol)
 	private HashMap<BECPBlock, Integer> agreementCyclesPTP = new HashMap<>(); //(PTP protocol)
 	private int ConvergedCycles; // (REAP protocol)
 	private HashSet<Integer> removedCachedBlocks = new HashSet<>();
-    private Stack<ArrayList<BECPNode>> arrayListPool1 = new Stack<>(); //(NCP) for local neighbour cache.
+    private Stack<ArrayList<BECPNode>> arrayListPool1 = new Stack<>(); //(NCP) for local neighbor cache.
     private Stack<HashMap<Integer, BECPBlock>> arrayListPool2 = new Stack<>(); //(PTP) for local block cache.
     private Stack<HashMap<Integer, Process>> arrayListPool3 = new Stack<>();//(ARP) for P.
+    private Stack<Multimap<BECPNode, Integer>> arrayListPool4 = new Stack<>();//(EPM+) for main cache_s.
+    private Stack<Multimap<BECPNode, Integer>> arrayListPool5 = new Stack<>();//(EPM+) for donated cache.
+    private Stack<Multimap<BECPNode, Integer>> arrayListPool6 = new Stack<>();//(EPM+) for main cache_d.
+    private Stack<ArrayList<BECPNode>> arrayListPool7 = new Stack<>();//(EPM) for neighborCache.
+    public HashMap<Integer, Boolean> IMPs = new HashMap<>();//(EMP+) for recording IMPs.
     private LinkedHashMap<PushEntry, HashMap<BECPNode, ArrayList<BECPBlock>>> tempCrashedEvents_1 = new LinkedHashMap<>(); // (REAP+)
     private LinkedHashMap<RecoveryEntry, HashMap<BECPNode, ArrayList<BECPBlock>>> tempCrashedEvents_2 = new LinkedHashMap<>(); // (REAP+)
-    HashMap<BECPBlock, BECPBlock> tempJoinedEvent = new HashMap<>();
-    HashMap<BECPNode, Integer> WAIT_INFORM_TIMS = new HashMap<>();
-    static int count;
+    HashMap<BECPBlock, BECPBlock> tempJoinedEvent = new HashMap<>(); // (REAP+)
+    HashMap<BECPNode, Integer> WAIT_INFORM_TIMS = new HashMap<>(); // (REAP+)
+    public static int count;
     
     public BECP(LocalBlockTree<B> localBlockTree) {
         super(localBlockTree);
@@ -132,19 +143,31 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
         	A copiedA = null;
         	C copiedC = null;
         	HashMap<Integer, Process> senderP;
-        	ArrayList<BECPNode> copyNeighborCache;
-        	ArrayList<BECPNode> senderNeighborCache;
-        	ArrayList<BECPNode> peerNeighborCache;
+        	ArrayList<BECPNode> copyNeighborCache = null;
+        	ArrayList<BECPNode> senderNeighborCache = null;
+        	Multimap<BECPNode, Integer> senderMainCache_s = null;
+        	Multimap<BECPNode, Integer> donatedCache = null;
+        	Multimap<BECPNode, Integer> mainCache_d = null;
+        	Multimap<BECPNode, Integer> senderDonatedCache = null;
+        	Multimap<BECPNode, Integer> senderMainCache_d = null;
+        	ArrayList<BECPNode> peerNeighborCache = null;
         	BECPPull<B> senderPull;
         	BECPPush<B> senderPush;
         	BECPNode peer;
         	BECPNode sender;
+        	BECPNode destination;
         	BECPBlockGossip<B> blockGossip;
         	double peerWeight = 0;
         	double peerValue = 0;
         	double senderWeight = 0;
         	double senderValue = 0;
         	double Cv;
+        	ArrayList<BECPNode> EMPCache_1 = new ArrayList<>();
+        	ArrayList<BECPNode> EMPCache_2 = new ArrayList<>();
+        	Multimap<BECPNode, Integer> cache_1 = ArrayListMultimap.create();
+        	Multimap<BECPNode, Integer> cache_2 = ArrayListMultimap.create();
+        	boolean forward = false;
+    		
         	RandomnessEngine randomnessEngine = this.peerBlockchainNode.getNetwork().getRandom();
             sender = (BECPNode) gossip.getSender();
             blockGossip = (BECPBlockGossip<B>) gossip;
@@ -153,14 +176,16 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 case PUSH:
                     senderPush = (BECPPush<B>) blockGossip;
                     if (true){
-                        //*System.out.println("received a push from "+sender.getNodeID()+" in the node "+peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime()); //*
+                        //*System.out.println("received a push from "+sender.getNodeID()+" in the node "+peer.getNodeID()+" at "+peer.getCycleNumber()); 
                         gossipType = GossipType.PULLING;
                         //****************Joining a Node*********************
-                        if(senderPush.isNewJoined()&&!peer.isCrashed) { // prevent sending the updates by a crashed node.
-                        	updatedLedger = peer.getLocalLedger();
-                        }
-                        if(peer.isCrashed) { // prevent running a joined node before getting updates.
-                        	break;
+                        if (REAP_PLUS) {
+                        	   if(senderPush.isNewJoined()&&!peer.isCrashed) { // prevent sending the updates by a crashed node.
+                               	updatedLedger = peer.getLocalLedger();
+                               }
+                               if(peer.isCrashed) { // prevent running a joined node before getting updates.
+                               	break;
+                               }
                         }
                         //****************Joining a Node*********************
                         //***** SSEP (System Size Estimation Protocol)*****//
@@ -175,7 +200,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         if (REAP) {
                         	Key key = new Key(senderPush.getSender().nodeID, senderPush.getCycleNumber());
                         	if(peer.getRecoveryCache().containsKey(key)) { // received a duplicate push message (detects a RePush).
-                            	//*System.out.println("received a RePush from " +sender.getNodeID()+" in the node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime()); //*                
+                            	//*System.out.println("received a RePush from " +sender.getNodeID()+" in the node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());             
                         		peer.getRecoveryCache().remove(key);
                         		break;
                         	}
@@ -190,7 +215,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         	Key key = new Key(senderPush.getSender().nodeID, senderPush.getCycleNumber());
                         	if(senderPush.getCriticalPushFlag()) {
                         		if(peer.getRecoveryCache().containsKey(key)) { // received a duplicate push message (detects a RePush).
-                                	//*System.out.println("received a RePush from " +sender.getNodeID()+" in the node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime()); //*                
+                                	//*System.out.println("received a RePush from " +sender.getNodeID()+" in the node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());               
                         			if(senderPush.isReceivedPull()) {
                         				peer.getRecoveryCache().remove(key); // do nothing
                         			}else {
@@ -272,12 +297,272 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             copyNeighborCache.remove(sender);
                         }
                         //##### NCP (Node Cache Protocol)#####//
-                        this.peerBlockchainNode.gossipMessage(
-                                new GossipMessage(
-                                		new GossipMessageBuilder().setCycleNumber(peer.getCycleNumber()).setValue(peerValue).setWeight(peerWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(false).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setLocalLedger(updatedLedger).buildPullGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
-                                ),sender
-                        );
-                        //System.out.println("sent a pull from "+peer.getNodeID()+" to "+ sender.getNodeID()+" at "+ peer.getSimulator().getSimulationTime()); //*
+                        if(EMP) {
+                        	if(senderPush.getCycleNumber() + 1 < peer.getCycleNumber()) {
+                        		//System.out.println("received a delayed Push"+"  h: "+ senderPush.getH());
+                        		count++;
+                        		//break;
+                        	}
+                        	senderNeighborCache = senderPush.getNeighborsLocalCache();
+                        	//System.out.println(peer.getNeighborsLocalCache().size()+"  "+senderNeighborCache.size());
+                        	int similarity = computeSimilarity(peer.getNeighborsLocalCache(), senderNeighborCache); //similarity: the number of common neighbors
+                        	if ((similarity==0)||(senderPush.getH() > H_MAX)) {
+                        		ArrayList<BECPNode> cache_m = new ArrayList<>();
+                        		ArrayList<BECPNode> duplicates = new ArrayList<>();
+                        		cache_m.clear();
+                        		duplicates.clear();
+                        		cache_m.addAll(peer.getNeighborsLocalCache());
+                        		for(BECPNode neighbor:senderNeighborCache) {
+                        			if (!cache_m.contains(neighbor)) {
+                        		        cache_m.add(neighbor);
+                        		    } else {
+                        		        duplicates.add(neighbor);
+                        		    }
+                        		}
+                        		
+                        		while (cache_m.size() < (2 * BECPScenario.NEIGHBOR_CACHE_SIZE)) { // insert random entry into cache_m
+                        	        /*
+                        			BECPNode randomNode = (BECPNode) peer.getNetwork().getRandomNode();
+                        	        if(cache_m.contains(randomNode)) {
+                        	        	cache_m.add(randomNode); 
+                        	        }
+                        	        */
+                        			for(BECPNode neighbor:duplicates) {
+                        				cache_m.add(neighbor);
+                        			}
+                        			//System.out.println("stuck in the while loop");
+                        		}
+                        		//System.out.println("cache_m       "+ cache_m.size()); // cashe_m size is either 2qm or (2qm - 1).
+                        		EMPCache_1.clear();
+                        		EMPCache_2.clear();
+                        		
+                        		List<BECPNode> entries = new ArrayList<>(cache_m); 
+                        		Collections.shuffle(entries, new Random(randomnessEngine.nextLong()));
+                        		//********************************
+                        		//EMPCache_1.add(sender);
+                        		//********************************
+                        		Iterator<BECPNode> iterator = entries.iterator();
+                        		while(iterator.hasNext()) {
+                        			BECPNode neighbor = iterator.next();
+                        			if (neighbor==peer) { 
+                        				EMPCache_2.add(neighbor);
+                        				iterator.remove();
+                         			} else if(neighbor==sender) { 
+                         				EMPCache_1.add(neighbor);
+                         				iterator.remove();
+                         			}
+                        		}
+                        		//******************************** Splitting other entries
+                        		for(BECPNode neighbor:entries) {
+                        			if (EMPCache_1.size()<BECPScenario.NEIGHBOR_CACHE_SIZE) { 
+                        				EMPCache_1.add(neighbor);
+                         			} else if(EMPCache_2.size()<BECPScenario.NEIGHBOR_CACHE_SIZE) { 
+                         				EMPCache_2.add(neighbor);
+                         			}
+                        		}
+                        		//********************************
+                                 //System.out.println("cache1       "+ EMPCache_1.size());
+                                 //System.out.println("cache2       "+ EMPCache_2.size());
+                                 //System.out.println("----------------------");
+                        		 peer.getNeighborsLocalCache().clear();
+                                 peer.getNeighborsLocalCache().addAll(EMPCache_1); // update local main cache
+                                 copyNeighborCache = getArrayListFromPool7();
+                                 copyNeighborCache.addAll(EMPCache_2); 
+                                 forward = false; // to perform a Pull
+                        	} else if (senderPush.getH() < H_MAX) {
+                        		forward = true;
+                        		if (similarity < senderPush.getV_d()) {
+                        			senderPush.setD(peer);
+                        			senderPush.setV_d(similarity);
+                        		}
+                        		destination = getForwardRandomNeighbor(peer, sender, randomnessEngine); //select random node else than [peer and sender] from main_cache
+                        		senderPush.setH(senderPush.getH() + 1);
+                        		peer.gossipMessage( 
+                                        new GossipMessage(
+                                        		new GossipMessageBuilder()
+                                        		.setCycleNumber(senderPush.getCycleNumber())
+                                        		.setValue(senderPush.getValue())
+                                        		.setWeight(senderPush.getWeight())
+                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
+                                        		.setNeighborsLocalCache(senderPush.getNeighborsLocalCache())
+                                        		.setD(senderPush.getD())
+                                        		.setV_d(senderPush.getV_d())
+                                        		.setH(senderPush.getH())
+                                        		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
+                                        ), destination);
+                        	} else if (senderPush.getH() == H_MAX) {
+                        		forward = true;
+                        		if (similarity < senderPush.getV_d()) {
+                        			senderPush.setD(peer);
+                        			senderPush.setV_d(similarity);
+                        		}
+                        		senderPush.setH(senderPush.getH() + 1);
+                        		destination = senderPush.getD();
+                        		peer.gossipMessage( 
+                                        new GossipMessage(
+                                        		new GossipMessageBuilder()
+                                        		.setCycleNumber(senderPush.getCycleNumber())
+                                        		.setValue(senderPush.getValue())
+                                        		.setWeight(senderPush.getWeight())
+                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
+                                        		.setNeighborsLocalCache(senderPush.getNeighborsLocalCache())
+                                        		.setD(senderPush.getD())
+                                        		.setV_d(senderPush.getV_d())
+                                        		.setH(senderPush.getH())
+                                        		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
+                                        ), destination);
+                        	}
+                        }
+                        //***** EMP+ (Expander Membership Protocol)*****//
+                        if(EMP_PLUS){
+                        	if(senderPush.getCycleNumber()<peer.getCycleNumber()) {
+                        		//System.out.println("received a delayed Push"+"  h: "+ senderPush.getH());
+                        		//break;
+                        	}
+                        	IMPs.put(peer.getCycleNumber(), true);
+                        	senderMainCache_s = senderPush.getMainCache_s();
+                        	//System.out.println("1.two Q        "+ peer.getMainCache().size()+"  "+ senderMainCache_s.size()+" reserveCache  "+ peer.getReserveCache().size());
+                        	int similarity = computeSimilarity(peer.getMainCache(), senderMainCache_s);
+                        	int v = computeTotalCacheSize(peer.getMainCache(), senderMainCache_s, peer.getReserveCache()); 
+                        	if (((v + 1) >= (2 * BECPScenario.NEIGHBOR_CACHE_SIZE)) || (senderPush.getH() > H_MAX)) {
+                        		Multimap<BECPNode, Integer> cache_m = ArrayListMultimap.create();
+                        		Multimap<BECPNode, Integer> duplicates = ArrayListMultimap.create();
+                        		cache_m.clear();
+                        		duplicates.clear();
+                        		cache_m.putAll(peer.getMainCache());
+                        		Iterator<Map.Entry<BECPNode, Integer>> iterator = senderMainCache_s.entries().iterator();
+                        		while (iterator.hasNext()) {
+                        		    Map.Entry<BECPNode, Integer> entry = iterator.next();
+                        		    if (!cache_m.containsKey(entry.getKey())) {
+                        		        cache_m.put(entry.getKey(), entry.getValue());
+                        		    } else {
+                        		        duplicates.put(entry.getKey(), entry.getValue());
+                        		    }
+                        		}
+                        		//System.out.println("cache_m       "+ cache_m.size()+ ", duplicates       "+ duplicates.size());
+                        		Iterator<Map.Entry<BECPNode, Integer>> iterator_1 = peer.getReserveCache().entries().iterator();
+                        		while (((cache_m.size() + 1) < (2 * BECPScenario.NEIGHBOR_CACHE_SIZE)) && iterator_1.hasNext()) { // insert entry from reserved_cache into cache_m
+                        		    Map.Entry<BECPNode, Integer> entry = iterator_1.next();
+                        		    cache_m.put(entry.getKey(), entry.getValue());
+                        		    iterator_1.remove(); 
+                        		}
+                        		Iterator <Map.Entry<BECPNode, Integer>> iterator_2 = duplicates.entries().iterator();   
+                        		while ((cache_m.size() + 1) < (2 * BECPScenario.NEIGHBOR_CACHE_SIZE)) { // insert random entry into cache_m
+                        	        /*
+                        			BECPNode randomNode = (BECPNode) peer.getNetwork().getRandomNode();
+                        	        if(cache_m.containsKey(randomNode)) {
+                        	        	cache_m.put(randomNode, peer.getCycleNumber()); 
+                        	        }
+                        	        */
+                        			
+                        			if(iterator_2.hasNext()) {
+                        	        	 Map.Entry<BECPNode, Integer> entry = iterator_2.next();      
+                            	         cache_m.put(entry.getKey(), entry.getValue());               
+                            	         iterator_2.remove();                                         
+                        	         } else {
+                        	        	System.out.println("stuck in a while loop to fill in cache_m");
+                        	         }
+                        	         
+                        		}
+                        		//System.out.println("cache_m       "+ cache_m.size()); // cashe_m size is either 2qm or (2qm - 1).
+                        		cache_1.clear();
+                        		cache_2.clear();
+                        		
+                        		List<Map.Entry<BECPNode, Integer>> entries = new ArrayList<>(cache_m.entries()); 
+                        		Collections.shuffle(entries, new Random(randomnessEngine.nextLong()));
+                        		//********************************
+                        		cache_1.put(sender, peer.getCycleNumber()); // CHECK VALUE
+                        		//********************************
+                        		Iterator<Map.Entry<BECPNode, Integer>> iterator_3 = entries.iterator();
+                        		while (iterator_3.hasNext()) {
+                        			Map.Entry<BECPNode, Integer> entry = iterator_3.next();
+                        			if (entry.getKey()==peer) { 
+                         				cache_2.put(entry.getKey(), entry.getValue());
+                         				iterator_3.remove();
+                         			} else if(entry.getKey()==sender) { 
+                         				cache_1.put(entry.getKey(), entry.getValue());
+                         				iterator_3.remove();
+                         			}
+                        		}
+                        		//******************************** Splitting other entries
+                        		Iterator<Map.Entry<BECPNode, Integer>> iterator_4 = entries.iterator();
+                        		while (iterator_4.hasNext()) {
+                        			Map.Entry<BECPNode, Integer> entry = iterator_4.next();
+                        			if (cache_1.size()<BECPScenario.NEIGHBOR_CACHE_SIZE) {
+                         				cache_1.put(entry.getKey(), entry.getValue());
+                         			} else if (cache_2.size()<BECPScenario.NEIGHBOR_CACHE_SIZE){
+                         				cache_2.put(entry.getKey(), entry.getValue()); // CHECK VALUE
+                         			}
+                        		}
+                        		//********************************
+                                //System.out.println("cache1       "+ cache_1.size());
+                                //System.out.println("cache2       "+ cache_2.size());
+                                //System.out.println("----------------------");
+                                peer.getMainCache().clear();
+                                peer.getMainCache().putAll(cache_1); // update local main cache
+                                Multimap<BECPNode, Integer> union = unionMultimap(peer, cache_2, peer.getHistoryCache()); // add the donated cache entries to the history cache
+                                //union.removeAll(peer);
+                                peer.getHistoryCache().clear(); 
+                                peer.getHistoryCache().putAll(union);
+                                
+                                donatedCache = getArrayListFromPool5();
+                                mainCache_d = getArrayListFromPool6();
+                                mainCache_d.putAll(cache_1);
+                                donatedCache.putAll(cache_2); 
+                                forward = false; // to perform a Pull
+                        	} else if (senderPush.getH() < H_MAX) {
+                        		forward = true;
+                        		if (similarity < senderPush.getV_d()) {
+                        			senderPush.setD(peer);
+                        			senderPush.setV_d(similarity);
+                        		}
+                        		destination = getForwardRandomNeighbor(peer, sender, peer.getMainCache(), randomnessEngine); //select random node else than [peer and sender] from main_cache
+                        		senderPush.setH(senderPush.getH() + 1);
+                        		peer.gossipMessage( 
+                                        new GossipMessage(
+                                        		new GossipMessageBuilder()
+                                        		.setCycleNumber(senderPush.getCycleNumber())
+                                        		.setValue(senderPush.getValue())
+                                        		.setWeight(senderPush.getWeight())
+                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
+                                        		.setMainCache_S(senderMainCache_s)
+                                        		.setD(senderPush.getD())
+                                        		.setV_d(senderPush.getV_d())
+                                        		.setH(senderPush.getH())
+                                        		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
+                                        ), destination);
+                        		//*System.out.println("forwarded a message from "+sender.getNodeID()+" to "+ destination.getNodeID()+" by node "+peer.nodeID+" at "+ peer.getCycleNumber()); 
+                        	} else if (senderPush.getH() == H_MAX) {
+                        		forward = true;
+                        		if (similarity < senderPush.getV_d()) {
+                        			senderPush.setD(peer);
+                        			senderPush.setV_d(similarity);
+                        		}
+                        		senderPush.setH(senderPush.getH() + 1);
+                        		destination = senderPush.getD();
+                        		peer.gossipMessage( 
+                                        new GossipMessage(
+                                        		new GossipMessageBuilder()
+                                        		.setCycleNumber(senderPush.getCycleNumber())
+                                        		.setValue(senderPush.getValue())
+                                        		.setWeight(senderPush.getWeight())
+                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
+                                        		.setMainCache_S(senderMainCache_s)
+                                        		.setD(senderPush.getD())
+                                        		.setV_d(senderPush.getV_d())
+                                        		.setH(senderPush.getH())
+                                        		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
+                                        ), destination);
+                        		//*System.out.println("Lastly, forwarded a message from "+sender.getNodeID()+" to "+ destination.getNodeID()+" by node "+peer.nodeID+" at "+ peer.getCycleNumber()); 
+                        	}
+                        }
+                        //##### EMP+ (Expander Membership Protocol)#####//
+                        //***** Perform PULL *****//
+                        if (!forward) {
+                            performPull(peer, sender, peerValue, peerWeight, copyNeighborCache, copyBlockCache, updatedLedger, peer, donatedCache, mainCache_d);
+                        }
+                        //##### Perform PULL #####//
+                        //*System.out.println("sent a pull from "+peer.getNodeID()+" to "+ sender.getNodeID()+" at "+ peer.getSimulator().getSimulationTime()); 
                         //***** SSEP (System Size Estimation Protocol)*****//
                         if(SSEP){
                             senderValue = senderPush.getValue();
@@ -296,7 +581,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         	ArrayList<Double> estimates = new ArrayList<>(); // the enqueue of estimates.
                             estimates.add(peerValue/peerWeight);
                             estimates.add(senderValue/senderWeight);
-                            if(peer.getReapQueue().size()==QUEUE_SIZE){ // if the queue is full.
+                            if(peer.getReapQueue().size() == QUEUE_SIZE){ // if the queue is full.
                                 peer.getReapQueue().poll();
                                 peer.getReapQueue().add(estimates);
                             }else{
@@ -321,7 +606,6 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             }else{
                                 ConvergedCycles = 0; // reset the counter.
                             }
-                            
                         }
                         //##### REAP (Robust Epidemic Aggregation Protocol)#####//
                         //***** REAP_PLUS (Robust Epidemic Aggregation Protocol)*****//
@@ -404,7 +688,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                          	 ArrayList<Double> estimates = new ArrayList<>(); // the enqueue of estimates.
                              estimates.add(becpBlock.getVDataAggregation()/becpBlock.getWDataAggregation());
                              estimates.add(senderBlock.getVDataAggregation()/senderBlock.getWDataAggregation());
-                             if(peer.getECPQueue().size()==QUEUE_SIZE){ // if the queue is full.
+                             if(peer.getECPQueue().size() == QUEUE_SIZE){ // if the queue is full.
                                  peer.getECPQueue().poll();
                                  peer.getECPQueue().add(estimates);
                              }else{
@@ -418,19 +702,27 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                          	 becpBlock.setLeader(Math.max(becpBlock.getLeader(), senderBlock.getLeader()));
                         }
                         //***** ECP (Epidemic Consensus Protocol)*****//
-                        releaseArrayListToPool1(senderNeighborCache);
+                        if(NCP) {
+                        	releaseArrayListToPool1(senderNeighborCache);
+                        }
                         if(PTP||ECP) {
                         	releaseArrayListToPool2(senderBlockLocalCache);
                         }
                         if(ARP) {
                         	releaseArrayListToPool3(senderP);
                         }
+                        if(EMP_PLUS) {
+                        	//releaseArrayListToPool4(senderMainCache_s);
+                        }
+                        if (EMP) {
+                        	//releaseArrayListToPool7(peerNeighborCache);
+                        }
                     }
                     break;
                 case PULL:
                     senderPull = (BECPPull<B>) blockGossip;
                     if (true) {
-                		//*System.out.println("received a pull from "+sender.getNodeID()+" in the node "+peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime()); //*
+                		//*System.out.println("received a pull from "+sender.getNodeID()+" in the node "+peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());
                     	//***** SSEP (System Size Estimation Protocol)*****//
                         if (SSEP) {
                             peerValue = peer.getValue();
@@ -453,7 +745,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             ArrayList<Double> estimates = new ArrayList<>();
                             estimates.add(peerValue/peerWeight);
                             estimates.add(senderValue/senderWeight);
-                            if(peer.getReapQueue().size()==QUEUE_SIZE){
+                            if(peer.getReapQueue().size() == QUEUE_SIZE){
                                 peer.getReapQueue().poll();
                                 peer.getReapQueue().add(estimates);
                             }else{
@@ -502,11 +794,6 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         				//System.out.println(cashBlock.getHeight()+" "+cashBlock.getCycleNumber()+" "+ cashBlock.getState());
                         			}
                             	}
-                        		/*
-                        		if(tempJoinedEvent.size()==0) {
-                            		peer.getJoinedNodes().add(peer); // update the list of joined nodes to inform others.
-                    			}
-                    			*/
                              //****************Joining a Node*********************
                     		}else {
                     			peerValue = peer.getValue();
@@ -556,6 +843,46 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             peer.setNeighborsLocalCache(peerNeighborCache);
                         }
                         //##### NCP (Node Cache Protocol)#####//
+                        if (EMP) {
+                        	if(senderPull.getCycleNumber()<peer.getCycleNumber()) {
+                        		//System.out.println("received a delayed Pull");
+                        		//break;
+                        	}
+                        	senderNeighborCache = senderPull.getNeighborsLocalCache();
+                        	peer.getNeighborsLocalCache().clear();
+                    		peer.getNeighborsLocalCache().addAll(senderNeighborCache); // Update local main cache
+                        }
+                        //***** EMP+ (Expander Membership Protocol)*****//
+                        if (EMP_PLUS) {
+                        	if(senderPull.getCycleNumber()<peer.getCycleNumber()) {
+                        		//System.out.println("received a delayed Pull");
+                        		//break;
+                        	}
+                        	senderDonatedCache = senderPull.getDonatedCache();
+                        	senderMainCache_d = senderPull.getMainCache_d();
+                        	if(IMPs.get(peer.getCycleNumber())==false){
+                        		peer.getMainCache().clear();
+                        		peer.getMainCache().putAll(senderDonatedCache); // Update local main cache
+                        	}else {
+                        		IMP(peer, senderPull, randomnessEngine); // call Interleave Management Procedure
+                        	}
+                        	while (peer.getReserveCache().size() > R_MAX) { // remove the oldest entry
+                        		long currentTime = peer.getCycleNumber();
+                        	    Map.Entry<BECPNode, Integer> oldestEntry = peer.getReserveCache()
+                        	            .entries()
+                        	            .stream()
+                        	            .max((e1, e2) -> Long.compare(
+                        	                currentTime - e1.getValue(), 
+                        	                currentTime - e2.getValue())
+                        	            ) 
+                        	            .orElse(null);
+                        		
+                        		if (oldestEntry != null) {
+                        		    peer.getReserveCache().remove(oldestEntry.getKey(),  oldestEntry.getValue());
+                        		}
+                        	}
+                        }
+                        //##### EMP+ (Expander Membership Protocol)#####//
                         //***** PTP (Phase Transition Protocol)*****//
                         if (PTP) {
                             senderBlockLocalCache = senderPull.getBlockLocalCache();
@@ -578,7 +905,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                              ArrayList<Double> estimates = new ArrayList<>(); // the enqueue of estimates.
                              estimates.add(becpBlock.getVDataAggregation()/becpBlock.getWDataAggregation());
                              estimates.add(senderBlock.getVDataAggregation()/senderBlock.getWDataAggregation());
-                             if(peer.getECPQueue().size()==QUEUE_SIZE){ // if the queue is full.
+                             if(peer.getECPQueue().size() == QUEUE_SIZE){ // if the queue is full.
                                  peer.getECPQueue().poll();
                                  peer.getECPQueue().add(estimates);
                              }else{
@@ -592,12 +919,21 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                              becpBlock.setLeader(Math.max(becpBlock.getLeader(), senderBlock.getLeader()));
                         }
                         //***** ECP (Epidemic Consensus Protocol)*****//
-                        releaseArrayListToPool1(senderNeighborCache);
+                        if(NCP) {
+                            releaseArrayListToPool1(senderNeighborCache);
+                        }
                         if(PTP||ECP) {
                         	releaseArrayListToPool2(senderBlockLocalCache);
                         }
                         if(ARP) {
                         	releaseArrayListToPool3(senderP);
+                        }
+                        if(EMP_PLUS) {
+                        	//releaseArrayListToPool5(senderDonatedCache);
+                        	//releaseArrayListToPool6(senderMainCache_d);
+                        }
+                        if (EMP) {
+                        	//releaseArrayListToPool7(peerNeighborCache);
                         }
                     }
                     break;
@@ -611,8 +947,9 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
     	HashMap<Integer, Process> copiedP = null;
     	A copiedA = null;
     	C copiedC = null;
-    	ArrayList<BECPNode> copyNeighborCache;
-    	BECPNode destination;
+    	ArrayList<BECPNode> copyNeighborCache = null;
+    	Multimap<BECPNode, Integer> copyMainCache_s = null;
+    	BECPNode destination = null;
     	double wAgreement;
     	double vAgreement;
     	double wPropagation;
@@ -779,6 +1116,41 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
             copyNeighborCache.remove(destination);
         }
         //##### NCP (Node Cache Protocol)#####//
+        if (EMP) {
+        	if(peer.getNeighborsLocalCache().contains(peer)) {
+        		//System.out.println("self key found: ");
+        	}
+        	
+        	destination = getRandomNeighbor(peer, randomnessEngine);
+        	copyNeighborCache = getArrayListFromPool7();
+        	copyNeighborCache.addAll(peer.getNeighborsLocalCache());
+        }
+        //***** EMP+ (Expander Membership Protocol)*****//
+        if(EMP_PLUS) {
+        	if(peer.getMainCache().containsKey(peer)) {
+        		System.out.println("self key found: ");
+        	}
+        	IMPs.put(peer.getCycleNumber(), false);
+        	removeExpiredEntries(peer, peer.getHistoryCache(), HL);
+        	long currentCycle = peer.getCycleNumber();
+        	Map.Entry<BECPNode, Integer> oldestEntry = peer.getMainCache() // get the oldest node from main cache
+        		    .entries()
+        		    .stream()
+        		    .max((e1, e2) -> Long.compare(
+        		        currentCycle - e1.getValue(), 
+        		        currentCycle - e2.getValue()  
+        		    )) 
+        		    .orElse(null);
+
+        	if (oldestEntry != null) {
+        	    destination = oldestEntry.getKey();
+        	} else {
+        	    throw new Error("destination is null!");
+        	}
+        	copyMainCache_s = getArrayListFromPool4();
+        	copyMainCache_s.putAll(peer.getMainCache());
+        }
+        //##### EMP+ (Expander Membership Protocol)#####//
         //***** PTP (Phase Transition Protocol)*****//
         if (PTP) {
             for (BECPBlock becpBlock:peerBlockLocalCache.values()) {
@@ -814,13 +1186,12 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
             }
         }
         //##### ECP(Epidemic Consensus Protocol)#####//
-        this.peerBlockchainNode.gossipMessage( // the function getNode() for NCP (Node Cache Protocol).
-                new GossipMessage(
-                		new GossipMessageBuilder().setCycleNumber(peer.getCycleNumber()).setValue(peerValue).setWeight(peerWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(peer.getCriticalPushFlag()).setIsReceivedPull(false).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
-                ), destination);
+        //***** Perform PUSH *****//
+        performPush(peer, destination, peerValue, peerWeight, copyNeighborCache, copyBlockCache, copyMainCache_s);
+        //##### Perform PUSH #####//
         simulator.putEvent(new NodeCycleEvent<BECPNode>(peer), BECPScenario.CYCLE_TIME);
         //System.out.println("next event was set to "+simulator.getSimulationTime()+BECPScenario.CYCLETIME+" for node "+peer.getNodeID());
-        //*System.out.println("sent a push from "+peer.getNodeID()+" to "+destination.getNodeID()+" at cycle "+peer.getCycleNumber());//*
+        //*System.out.println("sent a push from "+peer.getNodeID()+" to "+destination.getNodeID()+" at cycle "+peer.getCycleNumber());
         //System.out.println("a simulationEvent inserted by node "+peer.getNodeID()+" (queue size: "+simulator.getNumOfEvents()+") at "+simulator.getSimulationTime());
         //***** REAP (Robust Epidemic Aggregation Protocol)*****//
         if (REAP) {
@@ -836,7 +1207,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(false).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                             ), pushEntry.getDestination());
                     temp.add(pushEntry);
-                    //*System.out.println("sent a RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());//*
+                    //*System.out.println("sent a RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());
                 }
             }
             if(temp.size()>0){
@@ -893,7 +1264,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                 ), pushEntry.getDestination());
                         
                         temp.add(pushEntry);
-                        //*System.out.println("sent a RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());//*
+                        //*System.out.println("sent a RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());
                 	}else if(pushEntry.getTimeout()==0){
                 		this.peerBlockchainNode.gossipMessage( // perform a notification RePush.
                 				new GossipMessage(
@@ -901,7 +1272,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 				), pushEntry.getDestination());
                 
                         temp.add(pushEntry);
-                        //*System.out.println("sent a notification RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());//*
+                        //*System.out.println("sent a notification RePush from "+peer.getNodeID()+" to "+pushEntry.getDestination().getNodeID()+ " for cycle "+pushEntry.getCycleNumber());
                 	}
                 }
             }
@@ -1142,6 +1513,345 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
     	//System.out.println("New Cycle: Recovery cache size is "+peer.getRecoveryCache().size()+ " for node "+ peer.nodeID+" at "+peer.getSimulator().getSimulationTime());
     	//System.out.println("Push Entry cache size is "+peer.getPushEntriesBuffer().size()+ " for node "+ peer.nodeID);
     }
+
+	private void performPull(final BECPNode peer, final BECPNode sender, final double peerValue, final double peerWeight,
+			ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache,
+			final LinkedHashSet<BECPBlock> updatedLedger, final BECPNode d, final Multimap<BECPNode, Integer> donatedCache, final Multimap<BECPNode, Integer> mainCache_d) {
+        if(REAP_PLUS&&NCP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue).setWeight(peerWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.setCrashedNodes(peer.getCrashedNodes())
+                    		.setJoinedNodes(peer.getJoinedNodes())
+                    		.setLocalLedger(updatedLedger)
+                    		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+        } else if(REAP_PLUS&&EMP_PLUS) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.setCrashedNodes(peer.getCrashedNodes())
+                    		.setJoinedNodes(peer.getJoinedNodes())
+                    		.setD(d)
+                    		.setDonatedCache(donatedCache)
+                    		.setMainCache_d(mainCache_d)
+                    		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+        } else if(REAP&&NCP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue).setWeight(peerWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+        } else if(REAP&&EMP_PLUS) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.setD(d)
+                    		.setDonatedCache(donatedCache)
+                    		.setMainCache_d(mainCache_d)
+                    		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+        } else if(SSEP&&NCP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.buildPullGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+            
+        } else if(SSEP&&EMP_PLUS) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setD(d)
+                    		.setDonatedCache(donatedCache)
+                    		.setMainCache_d(mainCache_d)
+                    		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+        } else if(SSEP&&EMP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setD(d)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), sender);
+        }
+	}
+	
+	private void performPush(final BECPNode peer, final BECPNode destination, final double peerValue, final double peerWeight,
+			final ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache, final Multimap<BECPNode, Integer> cache_s) {
+        if(REAP_PLUS&&NCP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.setIsReceivedPull(false)
+                    		.setCrashedNodes(peer.getCrashedNodes())
+                    		.setJoinedNodes(peer.getJoinedNodes())
+                    		.setIsNewJoined(false)
+                    		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(REAP_PLUS&&EMP_PLUS) {
+            this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.setIsReceivedPull(false)
+                    		.setCrashedNodes(peer.getCrashedNodes())
+                    		.setJoinedNodes(peer.getJoinedNodes())
+                    		.setIsNewJoined(false)
+                    		.setMainCache_S(cache_s)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(REAP&&NCP) {
+            this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(REAP&&EMP_PLUS) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setCriticalPushFlag(peer.getCriticalPushFlag())
+                    		.setMainCache_S(cache_s)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(SSEP&&NCP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.buildPushGossip(peer, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        	
+        } else if(SSEP&&EMP_PLUS) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setMainCache_S(cache_s)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        } else if(SSEP&&EMP) {
+        	this.peerBlockchainNode.gossipMessage( 
+                    new GossipMessage(
+                    		new GossipMessageBuilder()
+                    		.setCycleNumber(peer.getCycleNumber())
+                    		.setValue(peerValue)
+                    		.setWeight(peerWeight)
+                    		.setBlockLocalCache(copyBlockCache)
+                    		.setNeighborsLocalCache(copyNeighborCache)
+                    		.setD(null)
+                    		.setV_d(Integer.MAX_VALUE)
+                    		.setH(0)
+                    		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                    ), destination);
+        }
+	}
+	
+	private Multimap<BECPNode, Integer> unionMultimap(BECPNode node, Multimap<BECPNode, Integer> cache_2, Multimap<BECPNode, Integer> historyCache) {
+	    Multimap<BECPNode, Integer> unionMap = ArrayListMultimap.create();
+	    
+	    unionMap.putAll(cache_2);
+	    for (BECPNode key : historyCache.keySet()) {
+	        if (!unionMap.containsKey(key)) {
+	            unionMap.putAll(key, historyCache.get(key));
+	        }
+	    }
+
+	    return unionMap;
+	}
+	
+	private int computeTotalCacheSize(Multimap<BECPNode, Integer> mainCache, Multimap<BECPNode, Integer> mainCache_S,
+			Multimap<BECPNode, Integer> reserveCache) {
+		
+	    Set<BECPNode> uniqueEntries = new HashSet<>();
+
+	    uniqueEntries.addAll(mainCache.keySet());
+	    uniqueEntries.addAll(mainCache_S.keySet());
+	    uniqueEntries.addAll(reserveCache.keySet());
+
+	    return uniqueEntries.size();
+	}
+	
+	public int computeSimilarity(Multimap<BECPNode, Integer> cache_1, Multimap<BECPNode, Integer> cache_2) {
+		Set<BECPNode> cache_1_Keys = cache_1.keySet();
+		Set<BECPNode> cache_2_Keys = cache_2.keySet();
+
+		Set<BECPNode> intersection = new HashSet<>(cache_1_Keys);
+		intersection.retainAll(cache_2_Keys); 
+
+		return intersection.size();
+	}
+	
+	public int computeSimilarity(ArrayList<BECPNode> cache_1, ArrayList<BECPNode> cache_2) {
+		HashSet<BECPNode> intersection = new HashSet<>(cache_1); 
+		
+		intersection.retainAll(cache_2); // Keep only elements that are also in cache_2
+
+	    return intersection.size(); 
+	}
+	
+	private void removeExpiredEntries(BECPNode node, Multimap<BECPNode, Integer> historyCache, int hl) {
+	    historyCache.entries().removeIf(entry -> (node.getCycleNumber()-entry.getValue()) > hl);
+	}
+	
+	private void IMP(BECPNode node, BECPPull<B> message, RandomnessEngine randomnessEngine) { // Interleave Management Procedure
+		Multimap<BECPNode, Integer> donatedCache = message.getDonatedCache();
+		Multimap<BECPNode, Integer> mainCache_d = message.getMainCache_d();
+		Multimap<BECPNode, Integer> historyCache = node.getHistoryCache();
+	    
+		Multimap<BECPNode, Integer> D1 = ArrayListMultimap.create();
+	    for (Map.Entry<BECPNode, Integer> entry : donatedCache.entries()) { // detect and remove the duplicates from case 1
+	        if (historyCache.containsKey(entry.getKey())) {
+	            D1.put(entry.getKey(), entry.getValue());
+	        }
+	    }
+	    donatedCache.keys().removeAll(D1.keys());
+	    
+	    Multimap<BECPNode, Integer> D2 = ArrayListMultimap.create();
+	    for (Map.Entry<BECPNode, Integer> entry : donatedCache.entries()) { // detect and remove the duplicates from case 1
+	        if (node.getMainCache().containsKey(entry.getKey())) {
+	            D2.put(entry.getKey(), entry.getValue());
+	        }
+	    }
+	    donatedCache.keys().removeAll(D2.keys());
+	    
+	    Multimap<BECPNode, Integer> D3 = ArrayListMultimap.create();
+	    for (Map.Entry<BECPNode, Integer> entry : node.getMainCache().entries()) { // detect and remove the duplicates from case 1
+	        if (mainCache_d.containsKey(entry.getKey())) {
+	            D3.put(entry.getKey(), entry.getValue());
+	        }
+	    }
+	    node.getMainCache().keys().removeAll(D3.keys());
+	    
+	    Multimap<BECPNode, Integer> temporaryCache = ArrayListMultimap.create(); // create a temporary cache
+	    temporaryCache.putAll(node.getMainCache());
+	    temporaryCache.putAll(message.getDonatedCache());
+	    
+	    while (temporaryCache.size() > BECPScenario.NEIGHBOR_CACHE_SIZE) { // remove the oldest entry in temporaryCache and add it to reserveCache
+	    	long currentTime = node.getCycleNumber();
+	        Map.Entry<BECPNode, Integer> oldestEntry = temporaryCache
+	                .entries()
+	                .stream()
+	                .max((e1, e2) -> Long.compare(
+	                    currentTime - e1.getValue(), 
+	                    currentTime - e2.getValue())
+	                ) 
+	                .orElse(null);
+
+	            if (oldestEntry != null) {
+	            	temporaryCache.remove(oldestEntry.getKey(), oldestEntry.getValue());
+	            	node.getReserveCache().put(oldestEntry.getKey(), oldestEntry.getValue());
+	            }
+	    }
+	    while ((temporaryCache.size() < BECPScenario.NEIGHBOR_CACHE_SIZE) && (node.getReserveCache().size() > 0)) { // remove the oldest entry in reserveCache and add it to temporaryCache
+	    	long currentTime = node.getCycleNumber(); 
+	    	Map.Entry<BECPNode, Integer> oldestEntry = node.getReserveCache()
+	                .entries()
+	                .stream()
+	                .max((e1, e2) -> Long.compare(
+	                    currentTime - e1.getValue(), 
+	                    currentTime - e2.getValue())
+	                )
+	                .orElse(null);
+
+	            if (oldestEntry != null) {
+	                node.getReserveCache().remove(oldestEntry.getKey(), oldestEntry.getValue());
+	                temporaryCache.put(oldestEntry.getKey(), oldestEntry.getValue());
+	            }
+	    }
+	    while (temporaryCache.size() < BECPScenario.NEIGHBOR_CACHE_SIZE) { // select a random entry from the duplicates and add it to temporaryCache
+	    	Multimap<BECPNode, Integer> selectedMap = null;
+	    	List<Multimap<BECPNode, Integer>> mapList = Arrays.asList(D1, D2, D3);
+
+	    	while ((selectedMap == null || selectedMap.isEmpty()) && mapList.stream().anyMatch(map -> !map.isEmpty())) {
+	    	    selectedMap = mapList.get(randomnessEngine.nextInt(mapList.size()));
+	    	}
+
+	    	if (selectedMap != null && !selectedMap.isEmpty()) {
+	    	    List<Map.Entry<BECPNode, Integer>> entries = new ArrayList<>(selectedMap.entries());
+	    	    Map.Entry<BECPNode, Integer> randomEntry = entries.get(randomnessEngine.nextInt(entries.size()));
+
+	    	    temporaryCache.put(randomEntry.getKey(), randomEntry.getValue());
+	    	} else {
+	    	    System.out.println("No valid map or entries available.");
+	    	}
+	    }
+	    node.getMainCache().clear();
+	    node.getMainCache().putAll(temporaryCache); //update local main cache
+	}
+	
 	/**
 	 * Resolves duplication issues in the blockLocalCache for a BECPNode.
 	 *
@@ -1306,7 +2016,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 					}
 				}
 				double average = getAverage(estimateValues); // Calculates the mean of the estimation values for the processes.
-				if(peer.getArpQueue().size()==QUEUE_SIZE){ // check if the queue is full.
+				if(peer.getArpQueue().size() == QUEUE_SIZE){ // check if the queue is full.
                 	peer.getArpQueue().poll();
                 	peer.getArpQueue().add(average); 
                 }else {
@@ -1340,7 +2050,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 			case CONSENSUS:
 				double estimate = peer.getC().getValue()/peer.getC().getWeight();
 				if(!Double.isNaN(estimate)&&Double.isFinite(estimate)) {
-	                if(peer.getArpQueue().size()==QUEUE_SIZE){ // if the queue is full.
+	                if(peer.getArpQueue().size() == QUEUE_SIZE){ // if the queue is full.
 	                	peer.getArpQueue().poll();
 	                	peer.getArpQueue().add(estimate); 
 	                }else{
@@ -1505,13 +2215,42 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
     private HashMap<Integer, BECPBlock> getArrayListFromPool2() {
         return arrayListPool2.isEmpty() ? new HashMap<Integer, BECPBlock>() : arrayListPool2.pop();
     }
-    private HashMap<Integer, Process> getArrayListFromPool3() {
-        return arrayListPool3.isEmpty() ? new HashMap<>() : arrayListPool3.pop();
-    }
     private void releaseArrayListToPool3(final HashMap<Integer, Process> arrayList) {
     	arrayList.clear();
         arrayListPool3.add(arrayList);
     }
+    private HashMap<Integer, Process> getArrayListFromPool3() {
+        return arrayListPool3.isEmpty() ? new HashMap<>() : arrayListPool3.pop();
+    }
+    private void releaseArrayListToPool4(final Multimap<BECPNode, Integer> arrayList) {
+    	arrayList.clear();
+        arrayListPool4.add(arrayList);
+    }
+    private Multimap<BECPNode, Integer> getArrayListFromPool4() {
+        return arrayListPool4.isEmpty() ? ArrayListMultimap.create() : arrayListPool4.pop();
+    }
+    private void releaseArrayListToPool5(final Multimap<BECPNode, Integer> arrayList) {
+    	arrayList.clear();
+        arrayListPool5.add(arrayList);
+    }
+    private Multimap<BECPNode, Integer> getArrayListFromPool5() {
+        return arrayListPool5.isEmpty() ? ArrayListMultimap.create() : arrayListPool5.pop();
+    }
+    private void releaseArrayListToPool6(final Multimap<BECPNode, Integer> arrayList) {
+    	arrayList.clear();
+        arrayListPool6.add(arrayList);
+    }
+    private Multimap<BECPNode, Integer> getArrayListFromPool6() {
+        return arrayListPool6.isEmpty() ? ArrayListMultimap.create() : arrayListPool6.pop();
+    }
+    private void releaseArrayListToPool7(final ArrayList<BECPNode> arrayList) {
+    	arrayList.clear();
+        arrayListPool7.add(arrayList);
+    }
+    private ArrayList<BECPNode> getArrayListFromPool7() {
+        return arrayListPool7.isEmpty() ? new ArrayList<>() : arrayListPool7.pop();
+    }
+    
     /**
      * Sets the currentMainChainHead based on the provided HashSet of confirmed blocks.
      *
@@ -1539,19 +2278,68 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
      * @return A neighboring BECPNode selected randomly for gossiping.
      */
     private BECPNode getRandomNeighbor(final BECPNode peer, final RandomnessEngine randomnessEngine) {
-    	BECPNode randomNeighbor;
-    	ArrayList<BECPNode> cache = peer.getNeighborsLocalCache();
-    	List<BECPNode> filteredCache = cache.stream().filter(node -> node.nodeID!=peer.nodeID).collect(Collectors.toList());
+        ArrayList<BECPNode> cache = peer.getNeighborsLocalCache();
 
-    	if (filteredCache.isEmpty()) {
-    		System.out.println("No valid neighbors available!");
-    		return null;
-    	}
+        if (cache == null || cache.isEmpty()) {
+            System.out.println("No valid neighbors available!");
+            return null;
+        }
 
-    	randomNeighbor = filteredCache.get(randomnessEngine.nextInt(filteredCache.size()));
-    	return randomNeighbor;
+        BECPNode randomNeighbor = cache.get(randomnessEngine.nextInt(cache.size()));
+
+        if (randomNeighbor == peer) {
+            System.out.println("Destination is the same as the sender!");
+            return null;
+        }
+
+        return randomNeighbor;
+    }
+    
+    /**
+     * Retrieves a random neighbor node for the Enhanced Expander Membership Protocol (EMP+).
+     * The function getNode() 
+     * @param peer The reference node used to obtain neighboring nodes.
+     * @param cache A multimap representing the main cache of nodes, where the key is a {@code BECPNode} object 
+     *              representing the neighboring node, and the value is its created time.
+     * @param randomnessEngine The engine providing randomness for node selection.
+     * @return A neighboring BECPNode selected randomly for gossiping.
+     */
+    private BECPNode getForwardRandomNeighbor(final BECPNode peer, final BECPNode sender, final Multimap<BECPNode, Integer> peerCache, final RandomnessEngine randomnessEngine) { // cache: [key: age, value: NodeID]
+    	BECPNode randomNeighbor = null;
+        // filtering out peer and sender
+        List<Map.Entry<BECPNode, Integer>> eligibleEntries = peerCache.entries().stream()
+                .filter(entry -> !entry.getKey().equals(peer) && !entry.getKey().equals(sender))
+                .collect(Collectors.toList());
+        if (eligibleEntries.isEmpty()) {
+            System.out.println("No eligible neighbors are available!");
+            return null;
+        }
+        
+        int randomIndex = randomnessEngine.nextInt(eligibleEntries.size());
+        Map.Entry<BECPNode, Integer> randomEntry = eligibleEntries.get(randomIndex);
+
+        randomNeighbor = randomEntry.getKey();
+        
+        return randomNeighbor;
     }
 
+    private BECPNode getForwardRandomNeighbor(final BECPNode peer, final BECPNode sender, final RandomnessEngine randomnessEngine) { 
+    	BECPNode randomNeighbor = null;
+        // filtering out peer and sender
+        List<BECPNode> eligibleEntries = peer.getNeighborsLocalCache().stream()
+                .filter(entry -> !entry.equals(peer) && !entry.equals(sender))
+                .collect(Collectors.toList());
+        if (eligibleEntries.isEmpty()) {
+            System.out.println("No eligible neighbors are available!");
+            return null;
+        }
+        
+        int randomIndex = randomnessEngine.nextInt(eligibleEntries.size());
+        randomNeighbor = eligibleEntries.get(randomIndex);
+        
+        return randomNeighbor;
+    }
+    
     public ArrayList<BECPNode> union(final ArrayList<BECPNode> list1, final BECPNode node) {
         // Create a HashSet from list1.
         HashSet<BECPNode> set = new HashSet<>(list1);

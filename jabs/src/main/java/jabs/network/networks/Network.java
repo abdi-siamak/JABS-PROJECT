@@ -60,6 +60,5 @@ public abstract class Network<N extends Node, NodeType extends Enum<NodeType>> {
     public RandomnessEngine getRandom() {
         return this.randomnessEngine;
     }
-
 }
 

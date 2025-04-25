@@ -14,6 +14,8 @@ import jabs.network.p2p.BECPP2P;
 import jabs.simulator.Simulator;
 
 import java.util.ArrayList;
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -36,20 +38,25 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
     private int cycleNumber = 0; //initial cycle number for the node.
     private double startTime; //start simulation time of the node.
     private ArrayList<BECPNode> neighborsLocalCache; //(NCP protocol)
+    private Multimap<BECPNode, Integer> mainNeighborsCache; // keys:[nodeID, createdTime]-(EMP+ protocol)
+    private Multimap<BECPNode, Integer> reserveCache; // keys:[nodeID, createdTime]-(EMP+ protocol)
+    private Multimap<BECPNode, Integer> historyCache; // keys:[nodeID, createdTime]-(EMP+ protocol)
     private HashMap<Integer, BECPBlock> blockLocalCache; //blockID -> block (PTP & ECP)
     private boolean criticalPushFlag; //(REAP protocol)
     private boolean convergenceFlag; //(REAP protocol)
-    private ArrayList<PushEntry> pushEntriesBuffer; //(REAP protocol)
-    private HashMap<Key, RecoveryEntry> recoveryCache; //keys:[Sender's Id, cycleNumber]-(REAP protocol)
+    private ArrayList<PushEntry> pushEntriesBuffer; //(REAP & REAP+ protocols)
+    private HashMap<Key, RecoveryEntry> recoveryCache; //keys:[Sender's Id, cycleNumber]-(REAP & REAP+ protocols)
     private Queue<ArrayList<Double>> reapQueue; //(REAP)-the estimations queue.
     private Queue<ArrayList<Double>> ecpQueue; //(ECP)-the estimations queue.
+    private ArrayList<ForwardMessage> forwardMessages; 
     private HashMap<Integer, Process> P; //(ARP)-process: pi.
     private A A; //(ARP)-the process Ai.
     private C C; //(ARP)-the process Ci.
     private int l; //(ARP)-the epoch identifier.
     private Queue<Double> arpQueue; //(ARP)-the queue Qi.    
 	private BECPNode.State state;
-	public boolean isCrashed;
+	public boolean isCrashed; 
+	public boolean messageInterleaving; //(EMP+ protocol)
 	private int joinCycle;
 	private HashSet<BECPNode> crashedNodes = new HashSet<>(); // (REAP+)
 	private HashSet<BECPNode> joinedNodes = new HashSet<>(); // (REAP+)
@@ -66,7 +73,7 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
         this.value = value;
         this.weight = weight;
         this.blockLocalCache = new HashMap<>();
-        this.neighborsLocalCache = new ArrayList<>();
+        this.neighborsLocalCache = new ArrayList<>(); // is initialized while populating the network.
         this.localLedger = new LinkedHashSet<>();
         this.setLastConfirmedBlock(BECP_GENESIS_BLOCK);
         this.currentPreferredBlock = BECP_GENESIS_BLOCK;
@@ -97,6 +104,12 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
         	this.A = new A(Integer.MAX_VALUE, 0.0, 0.0);
         	this.C = new C(Integer.MAX_VALUE, 0.0, 0.0);
         }
+        if(BECP.EMP_PLUS) {
+        	this.mainNeighborsCache = ArrayListMultimap.create();
+        	this.reserveCache = ArrayListMultimap.create();
+        	this.historyCache = ArrayListMultimap.create();
+        	this.forwardMessages = new ArrayList<>();
+        }
     }
     
     public enum State{
@@ -126,13 +139,17 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
     public ArrayList<BECPNode> getNeighborsLocalCache() { return neighborsLocalCache; }
 
     public void setNeighborsLocalCache(ArrayList<BECPNode> neighborsLocalCache){ this.neighborsLocalCache = neighborsLocalCache; }
+    
+    public Multimap<BECPNode, Integer> getMainCache() { return mainNeighborsCache; }
+    
+    public void setMainCache(Multimap<BECPNode, Integer> mainNeighborsCache) {this.mainNeighborsCache = mainNeighborsCache; }
 
     public void setBlockLocalCache(HashMap<Integer, BECPBlock> blockLocalCache){this.blockLocalCache = blockLocalCache; }
 
     public HashMap<Integer, BECPBlock> getBlockLocalCache(){ return blockLocalCache; }
     
     /**
-     * Retrieves an estimated value from the SPSP (the system size in the Protocol).
+     * Retrieves an estimated value from the SSEP, REAP, REAP+ (the system size in the Protocol).
      * 
      * @return The estimated value calculated based on the internal value and weight.
      */
@@ -321,5 +338,25 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 
 	public void setJoinCycle(int joinCycle) {
 		this.joinCycle = joinCycle;
+	}
+
+	public Multimap<BECPNode, Integer> getReserveCache() {
+		return reserveCache;
+	}
+
+	public void setReserveCache(Multimap<BECPNode, Integer> reserveCache) {
+		this.reserveCache = reserveCache;
+	}
+
+	public Multimap<BECPNode, Integer> getHistoryCache() {
+		return historyCache;
+	}
+
+	public void setHistoryCache(Multimap<BECPNode, Integer> historyCache) {
+		this.historyCache = historyCache;
+	}
+
+	public ArrayList<ForwardMessage> getForwardMessages() {
+		return forwardMessages;
 	}
 }

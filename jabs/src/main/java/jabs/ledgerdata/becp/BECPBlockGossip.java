@@ -1,6 +1,6 @@
 package jabs.ledgerdata.becp;
 
-import jabs.ledgerdata.Block; 
+import jabs.ledgerdata.Block;
 import jabs.ledgerdata.Gossip;
 import jabs.network.node.nodes.Node;
 

@@ -1,6 +1,6 @@
 package jabs.scenario;
 
-import jabs.Main; 
+import jabs.Main;
 import jabs.consensus.config.PAXOSConsensusConfig;
 import jabs.ledgerdata.paxos.PAXOSBlock;
 import jabs.ledgerdata.paxos.PAXOSPrepareVote;
@@ -124,14 +124,14 @@ public class PAXOSScenario extends AbstractScenario {
         	simulationTime = this.simulator.getSimulationTime();
         	if(TRACKING&&(simulationTime>recordTime)) {
 				recordTime = recordTime + TRACKING_TIME;
-            	int currentThroughput=0;
+				ArrayList<Integer> currentThroughput = new ArrayList<>();
                 for (PAXOSNode peer : (List<PAXOSNode>) network.getAllNodes()) {
                     if (!peer.isCrashed) {
-                    	currentThroughput = peer.getLastConfirmedBlockID();
+                    	currentThroughput.add(peer.getLastConfirmedBlockID());
                     }
                 }
                 ArrayList<Double> data = new ArrayList<>();
-                data.add(Double.valueOf(currentThroughput));
+                data.add(currentThroughput.stream().mapToInt(Integer::intValue).average().orElse(0.0));
                 data.add(getAverageConsensusTime());
                 data.add(Double.valueOf(PAXOSCSVLogger.numMessage));
                 data.add(Double.valueOf(PAXOSCSVLogger.messageSize));
@@ -163,12 +163,13 @@ public class PAXOSScenario extends AbstractScenario {
             logger.finalLog();
         }
         System.err.printf("Finished %s.\n", this.name+"-Number of Nodes:"+this.numOfNodes+"-Simulation Time:"+this.simulationStopTime);
-        for (PAXOSNode randomNode : (List<PAXOSNode>) network.getAllNodes()) {
-            if (!randomNode.isCrashed) {
-                Main.averageBlockchainHeights.add(randomNode.getLastConfirmedBlockID());
-                break;
-            }
-        }        
+        ArrayList<Integer> heights = new ArrayList<>();
+        for (PAXOSNode paxosNode : (List<PAXOSNode>) network.getAllNodes()) {
+        	//System.out.println("random node is: "+randomNode.nodeID);
+    		heights.add(paxosNode.getLastConfirmedBlockID());
+        }
+        Main.averageBlockchainHeights.add((int) heights.stream().mapToInt(Integer::intValue).average().orElse(0.0));
+        
         if(WRITE_LOCAL_LEDGERS) {
         	this.writeLocalLedger();
         }

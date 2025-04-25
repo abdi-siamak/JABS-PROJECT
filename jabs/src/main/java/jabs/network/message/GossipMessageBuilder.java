@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 
+import com.google.common.collect.Multimap;
+
 import jabs.ledgerdata.Gossip;
 import jabs.ledgerdata.becp.A;
 import jabs.ledgerdata.becp.BECPBlock;
@@ -16,22 +18,27 @@ import jabs.network.node.nodes.Node;
 import jabs.network.node.nodes.becp.BECPNode;
 
 public class GossipMessageBuilder {
-    private double value; // SSEP & REAP
-    private double weight; // SSEP & REAP
-    private int cycleNumber;
-    private LinkedHashSet<BECPBlock> localLedger;
+    private double value; // SSEP & REAP & REAP+
+    private double weight; // SSEP & REAP & REAP+
+    private int cycleNumber; 
+    private LinkedHashSet<BECPBlock> localLedger; // REAP+
     private ArrayList<BECPNode> neighborsLocalCache; // NCP
     private HashMap<Integer, BECPBlock> blockLocalCache; // PTP
-    private boolean criticalPushFlag; // REAP protocol
-    private HashMap<Integer, Process> P; // ARP protocol
-    private A A; // the process Ai-ARP protocol.
-    private C C; // the process Ci-ARP protocol.
+    private boolean criticalPushFlag; // REAP
+    private HashMap<Integer, Process> P; // ARP 
+    private A A; // the process Ai-ARP 
+    private C C; // the process Ci-ARP 
     private int l; // incremental global epoch identifier-ARP
     private HashSet<BECPNode> crashedNodes;// REAP+
     private HashSet<BECPNode> joinedNodes;// REAP+
     private boolean isNewJoined; // REAP+
     private boolean isReceivedPull; // REAP+
-    
+    private Multimap<BECPNode, Integer> mainCache_S; // EMP+
+    private Multimap<BECPNode, Integer> mainCache_d; // EMP+
+    private Multimap<BECPNode, Integer> donatedCache; // Q: set of donated cache entries (EMP+)
+    private Integer v_d; // current main overlap (EMP+)
+    private Integer h; // hop count (EMP+)
+    private BECPNode d; // current best destination node (EMP+)
 	public GossipMessageBuilder setValue(double value) {
 		this.value = value;
 		return this;
@@ -94,10 +101,40 @@ public class GossipMessageBuilder {
 	}
     
     public Gossip buildPullGossip(Node sender, int size) {
-    	return new BECPPull(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, l, P, A, C, crashedNodes, joinedNodes, localLedger);
+    	return new BECPPull<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, l, P, A, C, crashedNodes, joinedNodes, localLedger, mainCache_d, donatedCache);
     }
     
     public Gossip buildPushGossip(Node sender, int size) {
-    	return new BECPPush(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, isReceivedPull, l, P, A, C, crashedNodes, joinedNodes, isNewJoined);
+    	return new BECPPush<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, isReceivedPull, l, P, A, C, crashedNodes, joinedNodes, isNewJoined, mainCache_S, v_d, h, d);
     }
+
+	public GossipMessageBuilder setV_d(Integer v_d) {
+		this.v_d = v_d;
+		return this;
+	}
+
+	public GossipMessageBuilder setH(Integer h) {
+		this.h = h;
+		return this;
+	}
+	
+	public GossipMessageBuilder setD(BECPNode d) {
+		this.d = d;
+		return this;
+	}
+
+	public GossipMessageBuilder setMainCache_d(Multimap<BECPNode, Integer> mainCache_d) {
+		this.mainCache_d = mainCache_d;
+		return this;
+	}
+	
+	public GossipMessageBuilder setMainCache_S(Multimap<BECPNode, Integer> mainCache_S) {
+		this.mainCache_S = mainCache_S;
+		return this;
+	}
+	
+	public GossipMessageBuilder setDonatedCache(Multimap<BECPNode, Integer> donatedCache) {
+		this.donatedCache = donatedCache;
+		return this;
+	}
 }

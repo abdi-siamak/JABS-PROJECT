@@ -24,15 +24,25 @@ public class SnowNode extends PeerBlockchainNode<SnowBlock, SnowTx> {
         );
         this.consensusAlgorithm.setNode(this);
         this.currentBlock = SNOW_GENESIS_BLOCK;
-        this.lastConfirmedBlockID = 0;
+        this.lastConfirmedBlock = SNOW_GENESIS_BLOCK;
+    	this.isDecided = true;
+    	this.roundNumber = 0;
+    	this.cycleNumber = 0;
+    	this.setLastBlock(SNOW_GENESIS_BLOCK);
+    	this.lastGeneratedBlock = SNOW_GENESIS_BLOCK;
     }
 
+    public boolean newRound;
+    private int roundNumber;
     private SnowBlock currentBlock;
-    
     private SnowBlock lastBlock;
-    private boolean isDecided;
+    public boolean isDecided;
     private int cycleNumber;
-    private int lastConfirmedBlockID; // the ID of the last confirmed block
+    private SnowBlock lastConfirmedBlock; 
+    private double startTime; //start simulation time of the node.
+    private SnowBlock lastGeneratedBlock;
+	public boolean isCrashed;
+    
     @Override
     protected void processNewTx(SnowTx tx, Node from) {
         // nothing for now
@@ -61,14 +71,6 @@ public class SnowNode extends PeerBlockchainNode<SnowBlock, SnowTx> {
         // nothing for now
     }
 
-	public boolean isDecided() {
-		return isDecided;
-	}
-
-	public void setDecided(boolean isDecided) {
-		this.isDecided = isDecided;
-	}
-
 	public SnowBlock getCurrentBlock() {
 		return currentBlock;
 	}
@@ -85,12 +87,12 @@ public class SnowNode extends PeerBlockchainNode<SnowBlock, SnowTx> {
 		this.lastBlock = lastBlock;
 	}
 	
-	public int getLastConfirmedBlockID() {
-		return lastConfirmedBlockID;
+	public SnowBlock getLastConfirmedBlock() {
+		return lastConfirmedBlock;
 	}
 
-	public void setLastConfirmedBlockID(int lastConfirmedBlockID) {
-		this.lastConfirmedBlockID = lastConfirmedBlockID;
+	public void setLastConfirmedBlock(SnowBlock lastConfirmedBlock) {
+		this.lastConfirmedBlock = lastConfirmedBlock;
 	}
 
 	public int getCycleNumber() {
@@ -99,6 +101,30 @@ public class SnowNode extends PeerBlockchainNode<SnowBlock, SnowTx> {
 
 	public void addCycleNumber(int cycleNumber) {
 		this.cycleNumber = this.cycleNumber + cycleNumber;
+	}
+
+	public double getStartTime() {
+		return startTime;
+	}
+
+	public void setStartTime(double startTime) {
+		this.startTime = startTime;
+	}
+
+	public int getRoundNumber() {
+		return roundNumber;
+	}
+
+	public void addRoundNumber() {
+		this.roundNumber = this.roundNumber + 1;
+	}
+
+	public SnowBlock getLastGeneratedBlock() {
+		return lastGeneratedBlock;
+	}
+
+	public void setLastGeneratedBlock(SnowBlock lastGeneratedBlock) {
+		this.lastGeneratedBlock = lastGeneratedBlock;
 	}
 
 }

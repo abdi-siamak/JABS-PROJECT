@@ -10,6 +10,7 @@ import jabs.ledgerdata.becp.PushEntry;
 import jabs.ledgerdata.becp.ReplicaBlock;
 import jabs.log.AbstractLogger;
 import jabs.network.message.GossipMessage;
+import jabs.network.message.GossipMessageBuilder;
 import jabs.network.networks.becp.BECPBitcoinNetwork;
 import jabs.network.node.nodes.becp.BECPNode;
 import jabs.network.stats.NodeGlobalNetworkStats;
@@ -156,11 +157,39 @@ public class BECPBitcoinNetworkScenario extends AbstractScenario {
                 copyBlockCache = initializeBlockLocalCache(node, block);
             }
             //##### PTP (Phase Transition Protocol)#####//
-            node.gossipMessage(
-                    new GossipMessage(
-                            new BECPPush<>(node, node.getCycleNumber(), getSizeOfBlocks(copyBlockCache), nodeValue, nodeWeight, copyNeighborCache, copyBlockCache, node.getCriticalPushFlag(), false, node.getL(), node.getP(), node.getA(), node.getC(), node.getCrashedNodes(), node.getJoinedNodes(), false)
-                    ), destination
-            );
+            //***** Perform PUSH *****//
+            if(BECP.REAP_PLUS&&BECP.NCP) {
+            	node.gossipMessage( 
+                        new GossipMessage(
+                        		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(nodeValue).setWeight(nodeWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(node.getCriticalPushFlag()).setIsReceivedPull(false).setCrashedNodes(node.getCrashedNodes()).setJoinedNodes(node.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                        ), destination);
+            } else if(BECP.REAP_PLUS&&BECP.EMP_PLUS) {
+            	node.gossipMessage( 
+                        new GossipMessage(
+                        		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(nodeValue).setWeight(nodeWeight).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(node.getCriticalPushFlag()).setIsReceivedPull(false).setCrashedNodes(node.getCrashedNodes()).setJoinedNodes(node.getJoinedNodes()).setIsNewJoined(false).setMainCache_S(node.getMainCache()).setD(null).setV_d(Integer.MAX_VALUE).setH(0).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                        ), destination);
+            } else if(BECP.REAP&&BECP.NCP) {
+                node.gossipMessage( 
+                        new GossipMessage(
+                        		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(nodeValue).setWeight(nodeWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(node.getCriticalPushFlag()).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                        ), destination);
+            } else if(BECP.REAP&&BECP.EMP_PLUS) {
+            	node.gossipMessage( 
+                        new GossipMessage(
+                        		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(nodeValue).setWeight(nodeWeight).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(node.getCriticalPushFlag()).setMainCache_S(node.getMainCache()).setD(null).setV_d(Integer.MAX_VALUE).setH(0).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                        ), destination);
+            } else if(BECP.SSEP&&BECP.NCP) {
+            	node.gossipMessage( 
+                        new GossipMessage(
+                        		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(nodeValue).setWeight(nodeWeight).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                        ), destination);
+            } else if(BECP.SSEP&&BECP.EMP_PLUS) {
+            	node.gossipMessage( 
+                        new GossipMessage(
+                        		new GossipMessageBuilder().setCycleNumber(node.getCycleNumber()).setValue(nodeValue).setWeight(nodeWeight).setBlockLocalCache(copyBlockCache).setMainCache_S(node.getMainCache()).setD(null).setV_d(Integer.MAX_VALUE).setH(0).buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
+                        ), destination);
+            }
+            //##### Perform PUSH #####//
             simulator.putEvent(new NodeCycleEvent(node), cycleTime); // putting a "simulationEvent" to determine the next cycle start time
             //System.out.println("a simulationEvent inserted by node "+node.getNodeID()+" (queue size: "+simulator.getNumOfEvents()+") at "+simulator.getSimulationTime());
             //*System.out.println("Initializing, sent a push from "+copyBlockCache.get(0).getCreator().getNodeID()+" to "+destination.getNodeID()+" at "+simulator.getSimulationTime());//*

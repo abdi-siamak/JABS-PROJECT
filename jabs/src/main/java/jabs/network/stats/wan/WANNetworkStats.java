@@ -9,7 +9,7 @@ public class WANNetworkStats implements NetworkStats<SingleNodeType> {
     public static final double MAX_LATENCY = 0.15d; // The maximum latency for one message.
     public static final double MIN_LATENCY = 0.05d;
     private static final double xm = 0.05d; // Scale parameter, the minimum possible value for the variable.
-    public static final double alpha = 7d; // Shape parameter, controls the "fatness" of the tail. Smaller values of α lead to heavier tails, meaning more extreme values (i.e., higher variability).
+    public static final double alpha = 2d; // Shape parameter, controls the "fatness" of the tail. Smaller values of α lead to heavier tails, meaning more extreme values (i.e., higher variability).
     public static final LatencyDistribution DISTRIBUTION = LatencyDistribution.UNIFORM;
     
     public WANNetworkStats(RandomnessEngine randomnessEngine) {

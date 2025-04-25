@@ -1,6 +1,6 @@
 package jabs.scenario;
 
-import jabs.Main; 
+import jabs.Main;
 import jabs.consensus.config.PBFTConsensusConfig;
 import jabs.ledgerdata.pbft.PBFTBlock;
 import jabs.ledgerdata.pbft.PBFTPrePrepareVote;
@@ -123,14 +123,14 @@ public class PBFTScenario extends AbstractScenario {
         	simulationTime = this.simulator.getSimulationTime();
 			if(TRACKING&&(simulationTime>recordTime)) {
 				recordTime = recordTime + TRACKING_TIME;
-            	int currentThroughput=0;
+				ArrayList<Integer> currentThroughput = new ArrayList<>();
                 for (PBFTNode peer : (List<PBFTNode>) network.getAllNodes()) {
                     if (!peer.isCrashed) {
-                    	currentThroughput = peer.getLastConfirmedBlockID();
+                    	currentThroughput.add(peer.getLastConfirmedBlockID());
                     }
                 }
                 ArrayList<Double> data = new ArrayList<>();
-                data.add(Double.valueOf(currentThroughput));
+                data.add(currentThroughput.stream().mapToInt(Integer::intValue).average().orElse(0.0));
                 data.add(getAverageConsensusTime());
                 data.add(Double.valueOf(PBFTCSVLogger.numMessage));
                 data.add(Double.valueOf(PBFTCSVLogger.messageSize));
@@ -167,6 +167,12 @@ public class PBFTScenario extends AbstractScenario {
                 break;
             }
         }
+        ArrayList<Integer> heights = new ArrayList<>();
+        for (PBFTNode pbftNode : (List<PBFTNode>) network.getAllNodes()) {
+        	//System.out.println("random node is: "+randomNode.nodeID);
+    		heights.add(pbftNode.getLastConfirmedBlockID());
+        }
+        Main.averageBlockchainHeights.add((int) heights.stream().mapToInt(Integer::intValue).average().orElse(0.0));
         
         if(WRITE_LOCAL_LEDGERS) {
         	this.writeLocalLedger();
