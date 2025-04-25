@@ -26,20 +26,22 @@ To install and use this simulator, follow the instructions below:
 1. Clone this repository:
    ```bash
    git clone https://github.com/abdi-siamak/JABS-PROJECT
-
+   ```bash
 2. Install Java and Maven if you haven't already:
-  Download and install Java (version 8 or higher).
-  Install Maven.
+  [Download and install Java (version 8 or higher)](https://www.oracle.com/java/technologies/javase-jdk11-downloads.html).
+  [Install Maven](https://maven.apache.org/install.html).
 
 3. Navigate to the repository directory and build the project with Maven:
+   ```bash
    cd jabs-modified
    mvn clean install
-
+   ```bash
 ## Usage
 
 To run the simulator, execute the following command:
+```bash
 mvn exec:java -Dexec.mainClass="Main"
-
+```bash
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
