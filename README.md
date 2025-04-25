@@ -28,6 +28,7 @@ To install and use this simulator, follow the instructions below:
    git clone https://github.com/abdi-siamak/JABS-PROJECT
 
 2. Install Java and Maven if you haven't already:
+   
    [Download and install Java (version 8 or higher)](https://www.oracle.com/java/technologies/javase-jdk11-downloads.html).
    
    [Install Maven](https://maven.apache.org/install.html).
