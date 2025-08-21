@@ -1,1 +1,10 @@
-/target/
+/.metadata/
+Excel\ Library/
+target/
+javadoc/
+output/
+.DS_Store/
+jabs/.DS_Store/
+jabs/src/.DS_Store/
+jabs/src/main/.DS_Store
+jabs/src/main/java/.DS_Store
