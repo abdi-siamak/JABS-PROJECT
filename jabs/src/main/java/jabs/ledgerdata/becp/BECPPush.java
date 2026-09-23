@@ -27,12 +27,14 @@ public class BECPPush<B extends Block<B>> extends BECPBlockGossip<B> {
     private final HashSet<BECPNode> crashedNodes; // REAP+
     private final HashSet<BECPNode> joinedNodes; // REAP+
     private final boolean isReceivedPull; // REAP+
+	private final boolean recoveryRePush; // true only for REAP+ RePush messages
+	private final RecoveryExchangeId recoveryExchangeId; // REAP+ recovery exchange
     private Multimap<BECPNode, Integer> mainCache_s; // Q_S: main cache of s (EMP+)
     private Integer v_d; // current main overlap (EMP+)
     private Integer h; // hop count (EMP+)
     private BECPNode d; // current best destination node (EMP+)
     
-    public BECPPush(final Node sender, final int cycleNumber, final int size, final double value, final double weight, final ArrayList<BECPNode> neighborsLocalCache, final HashMap<Integer, BECPBlock> blockLocalCache, final boolean criticalPushFlag, final boolean isReceivedPull, final Integer l, final HashMap<Integer, Process> P, final A A, final C C, final HashSet<BECPNode> crashedNodes, final HashSet<BECPNode> joinedNodes, final boolean isNewJoined, Multimap<BECPNode, Integer> mainCache_s, Integer v_d, Integer h, BECPNode d) {
+    public BECPPush(final Node sender, final int cycleNumber, final int size, final double value, final double weight, final ArrayList<BECPNode> neighborsLocalCache, final HashMap<Integer, BECPBlock> blockLocalCache, final boolean criticalPushFlag, final boolean isReceivedPull, final boolean recoveryRePush, final Integer l, final HashMap<Integer, Process> P, final A A, final C C, final HashSet<BECPNode> crashedNodes, final HashSet<BECPNode> joinedNodes, final boolean isNewJoined, Multimap<BECPNode, Integer> mainCache_s, Integer v_d, Integer h, BECPNode d, RecoveryExchangeId recoveryExchangeId) {
         super(size + BECP_GOSSIP_SIZE_OVERHEAD, sender, GossipType.PUSH);
         this.value = value;
         this.weight = weight;
@@ -48,6 +50,8 @@ public class BECPPush<B extends Block<B>> extends BECPBlockGossip<B> {
         this.crashedNodes = crashedNodes;
         this.isReceivedPull = isReceivedPull;
         this.joinedNodes = joinedNodes;
+		this.recoveryRePush = recoveryRePush;
+		this.recoveryExchangeId = recoveryExchangeId;
         this.setMainCache_s(mainCache_s);
         this.setV_d(v_d);
         this.setH(h);
@@ -113,6 +117,9 @@ public class BECPPush<B extends Block<B>> extends BECPBlockGossip<B> {
 	public boolean isReceivedPull() {
 		return isReceivedPull;
 	}
+	public boolean isRecoveryRePush() {
+		return recoveryRePush;
+	}
 	public Integer getV_d() {
 		return v_d;
 	}
@@ -136,5 +143,8 @@ public class BECPPush<B extends Block<B>> extends BECPBlockGossip<B> {
 	}
 	public void setD(BECPNode d) {
 		this.d = d;
+	}
+	public RecoveryExchangeId getRecoveryExchangeId() {
+		return recoveryExchangeId;
 	}
 }

@@ -8,6 +8,7 @@ import jabs.ledgerdata.becp.BECPBlock;
 import jabs.ledgerdata.becp.C;
 import jabs.ledgerdata.becp.PushEntry;
 import jabs.ledgerdata.becp.ReplicaBlock;
+import jabs.ledgerdata.becp.RecoveryExchangeId;
 import jabs.log.AbstractLogger;
 import jabs.log.BECPCSVLogger;
 import jabs.network.message.GossipMessage;
@@ -276,7 +277,11 @@ public class BECPScenario extends AbstractScenario{
             }
             //##### ECP(Epidemic Consensus Protocol) & PTP(Phase Transition Protocol)#####//
             //***** Perform PUSH *****//
-            performPush(node, destination, nodeValue, nodeWeight, copyNeighborCache, copyBlockCache, copyMainCache_s);
+            RecoveryExchangeId recoveryExchangeId = null;
+            if (BECP.REAP_PLUS && node.getCriticalPushFlag()) {
+                recoveryExchangeId = node.createRecoveryExchangeId();
+            }
+            performPush(node, destination, nodeValue, nodeWeight, copyNeighborCache, copyBlockCache, copyMainCache_s, recoveryExchangeId);
             //##### Perform PUSH #####//
             simulator.putEvent(new NodeCycleEvent<BECPNode>(node), CYCLE_TIME);
             //System.out.println("next event was set to "+simulator.getSimulationTime()+BECPScenario.CYCLETIME+" for node "+node.getNodeID());
@@ -288,18 +293,24 @@ public class BECPScenario extends AbstractScenario{
                 	if(BECP.REAP_PLUS) {
                 		if(node.getBlockLocalCache().size()>0) {
                         	for (BECPBlock becpBlock:node.getBlockLocalCache().values()) {
-                        		ReplicaBlock replicaBlock = new ReplicaBlock();
-                        		replicaBlock.setVPropagation(becpBlock.getVPropagation());
-                        		replicaBlock.setWPropagation(becpBlock.getWPropagation());
-                        		replicaBlock.setVAgreement(becpBlock.getVAgreement());
-                        		replicaBlock.setWAgreement(becpBlock.getWAgreement());
-                        		
-                        		replicaBlockCache.put(becpBlock.getHeight(), replicaBlock);
+                                ReplicaBlock replicaBlock = new ReplicaBlock();
+                                replicaBlock.setVPropagation(becpBlock.getVPropagation());
+                                replicaBlock.setWPropagation(becpBlock.getWPropagation());
+                                replicaBlock.setVAgreement(becpBlock.getVAgreement());
+                                replicaBlock.setWAgreement(becpBlock.getWAgreement());
+                                replicaBlock.setBlockCreator(becpBlock.getCreator());
+                                replicaBlock.setBlockHash(becpBlock.getHash());
+
+                                replicaBlockCache.put(becpBlock.getHeight(), replicaBlock);
                         	}
                     	}
                 	}
-                	
-                    node.getPushEntriesBuffer().add(new PushEntry(destination, node.getCycleNumber(), BECP.PULL_TIMEOUT,node.getValue(), node.getWeight(), replicaBlockCache));
+                	PushEntry pushEntry = new PushEntry(destination, node.getCycleNumber(), BECP.PULL_TIMEOUT, node.getValue(), node.getWeight(), replicaBlockCache);
+                    if (BECP.REAP_PLUS) {
+                        pushEntry.setRecoveryExchangeId(recoveryExchangeId);
+                    }
+
+                    node.getPushEntriesBuffer().add(pushEntry);
                 }
             }
             //##### REAP (Robust Epidemic Aggregation Protocol)#####//
@@ -308,7 +319,7 @@ public class BECPScenario extends AbstractScenario{
         }
     }
 
-	private void performPush(final BECPNode node, final BECPNode destination, final double nodeValue, final double nodeWeight, final ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache, final Multimap<BECPNode, Integer> copyCache_s) {
+	private void performPush(final BECPNode node, final BECPNode destination, final double nodeValue, final double nodeWeight, final ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache, final Multimap<BECPNode, Integer> copyCache_s, final RecoveryExchangeId recoveryExchangeId) {
         if(BECP.REAP_PLUS&&BECP.NCP) {
         	node.gossipMessage( 
                     new GossipMessage(
@@ -323,6 +334,7 @@ public class BECPScenario extends AbstractScenario{
                     		.setCrashedNodes(node.getCrashedNodes())
                     		.setJoinedNodes(node.getJoinedNodes())
                     		.setIsNewJoined(false)
+                            .setRecoveryExchangeId(recoveryExchangeId)
                     		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(BECP.REAP_PLUS&&BECP.EMP_PLUS) {
@@ -342,6 +354,7 @@ public class BECPScenario extends AbstractScenario{
                     		.setD(null)
                     		.setV_d(Integer.MAX_VALUE)
                     		.setH(0)
+                            .setRecoveryExchangeId(recoveryExchangeId)
                     		.buildPushGossip(node, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(BECP.REAP&&BECP.NCP) {
@@ -632,7 +645,8 @@ public class BECPScenario extends AbstractScenario{
 	
     private void join(BECPNode node) {
     	//System.out.println("node "+node.nodeID+" was rejoined at cycle "+node.getCycleNumber()+", and simulation time "+node.getSimulator().getSimulationTime());
-		node.restore();
+		node.terminalizePendingRecoveryExchangesForRestart();
+        node.restore();
 		node.getRecoveryCache().clear();
 		node.getPushEntriesBuffer().clear();
 		node.getBlockLocalCache().clear();
@@ -659,27 +673,53 @@ public class BECPScenario extends AbstractScenario{
 	private void testBlockchain() {
 		boolean test = true;
 		HashMap<Integer, Integer> failedNodesBlocks = new HashMap<>();
+        HashMap<Integer, BECPBlock> committedBlockByHeight = new HashMap<>();
+        HashMap<Integer, Integer> committedNodeByHeight = new HashMap<>();
 		List<BECPNode> nodes = network.getAllNodes();
 		
 		for(BECPNode node:nodes) {
-			if(!node.isCrashed) {
+                /*
+                * Global safety invariant: two different blocks must never be committed at the same height,
+                * including commits retained by nodes that later crashed.
+                */
+                for (BECPBlock committedBlock : node.getLocalLedger()) {
+                    BECPBlock existingBlock = committedBlockByHeight.get(committedBlock.getHeight());
+                    if (existingBlock == null) {
+                        committedBlockByHeight.put(committedBlock.getHeight(), committedBlock);
+                        committedNodeByHeight.put(committedBlock.getHeight(), node.getNodeID());
+                    } else if (existingBlock.getHash()!= committedBlock.getHash()) {
+                        throw new IllegalStateException(
+                                "Safety violation: divergent commits at height "
+                                + committedBlock.getHeight()
+                                + ". Node "
+                                + committedNodeByHeight.get(
+                                        committedBlock.getHeight())
+                                + " committed one block, while node "
+                                + node.getNodeID()
+                                + " committed a different block.");
+                    }
+                }
 				Iterator<BECPBlock> iterator = node.getLocalLedger().iterator();
 		        if (!iterator.hasNext()) {
-		            return; // If the set is empty, do nothing
+		            continue;
 		        }
 		        BECPBlock previousBlock = iterator.next(); // Start with the first block
 		        while (iterator.hasNext()) {
 		            BECPBlock currentBlock = iterator.next();
 
-		            if(currentBlock.getParent().getHash().hashCode()!=previousBlock.getHash().hashCode()) {
-		            	test = false;
-		            	failedNodesBlocks.put(node.nodeID, previousBlock.getHeight());
-		            	break;
+		            if (currentBlock.getHeight() != previousBlock.getHeight() + 1 || currentBlock.getParent().getHash() != previousBlock.getHash()) {
+                        throw new IllegalStateException(
+                                "Safety violation: committed block "
+                                + currentBlock.getHeight()
+                                + " in node "
+                                + node.getNodeID()
+                                + " does not follow committed block "
+                                + previousBlock.getHeight()
+                                + ".");
 		            }
 		            // Move to the next element
 		            previousBlock = currentBlock;
 		        }
-			}
 		}
 		if(test) {
 			System.out.println("test successful!");

@@ -1,5 +1,5 @@
 package jabs.ledgerdata.becp;
-
+import jabs.ledgerdata.Hash;
 import jabs.network.node.nodes.Node;
 
 public class ReplicaBlock {
@@ -8,6 +8,7 @@ public class ReplicaBlock {
     private double vAgreement;
     private double wAgreement;
     private Node blockCreator;
+	private Hash blockHash;
     
 	public double getVPropagation() {
 		return vPropagation;
@@ -38,5 +39,11 @@ public class ReplicaBlock {
 	}
 	public void setBlockCreator(Node blockCreator) {
 		this.blockCreator = blockCreator;
+	}
+	public Hash getBlockHash() {
+    	return blockHash;
+	}
+	public void setBlockHash(Hash blockHash) {
+		this.blockHash = blockHash;
 	}
 }

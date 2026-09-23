@@ -14,6 +14,7 @@ import jabs.ledgerdata.becp.BECPPull;
 import jabs.ledgerdata.becp.BECPPush;
 import jabs.ledgerdata.becp.C;
 import jabs.ledgerdata.becp.Process;
+import jabs.ledgerdata.becp.RecoveryExchangeId;
 import jabs.network.node.nodes.Node;
 import jabs.network.node.nodes.becp.BECPNode;
 
@@ -33,6 +34,8 @@ public class GossipMessageBuilder {
     private HashSet<BECPNode> joinedNodes;// REAP+
     private boolean isNewJoined; // REAP+
     private boolean isReceivedPull; // REAP+
+	private RecoveryExchangeId recoveryExchangeId; // REAP+
+	private boolean recoveryRePush; // REAP+
     private Multimap<BECPNode, Integer> mainCache_S; // EMP+
     private Multimap<BECPNode, Integer> mainCache_d; // EMP+
     private Multimap<BECPNode, Integer> donatedCache; // Q: set of donated cache entries (EMP+)
@@ -95,17 +98,24 @@ public class GossipMessageBuilder {
 		this.isReceivedPull = isReceivedPull;
 		return this;
 	}
+	public GossipMessageBuilder setRecoveryRePush(boolean recoveryRePush) {
+		this.recoveryRePush = recoveryRePush;
+		return this;
+	}
 	public GossipMessageBuilder setIsNewJoined(boolean isNewJoined) {
 		this.isNewJoined = isNewJoined;
 		return this;
 	}
-    
+	public GossipMessageBuilder setRecoveryExchangeId(RecoveryExchangeId recoveryExchangeId) {
+		this.recoveryExchangeId = recoveryExchangeId;
+		return this;
+	}
     public Gossip buildPullGossip(Node sender, int size) {
-    	return new BECPPull<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, l, P, A, C, crashedNodes, joinedNodes, localLedger, mainCache_d, donatedCache);
+    	return new BECPPull<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, l, P, A, C, crashedNodes, joinedNodes, localLedger, mainCache_d, donatedCache, recoveryExchangeId);
     }
     
     public Gossip buildPushGossip(Node sender, int size) {
-    	return new BECPPush<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, isReceivedPull, l, P, A, C, crashedNodes, joinedNodes, isNewJoined, mainCache_S, v_d, h, d);
+    	return new BECPPush<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, isReceivedPull, recoveryRePush, l, P, A, C, crashedNodes, joinedNodes, isNewJoined, mainCache_S, v_d, h, d, recoveryExchangeId);
     }
 
 	public GossipMessageBuilder setV_d(Integer v_d) {
