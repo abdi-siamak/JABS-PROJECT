@@ -12,6 +12,7 @@ public abstract class BECPBlockGossip<B extends Block<B>> extends Gossip {
     public enum GossipType {
         PUSH,
         PULL,
+        FINAL_CONFIRMATION,
         INFORM,
         REQUEST_UPDATE,
         RECEIVE_UPDATE

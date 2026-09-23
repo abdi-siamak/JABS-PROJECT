@@ -26,10 +26,11 @@ public class BECPPull<B extends Block<B>> extends BECPBlockGossip<B> {
     private final int l; // incremental global epoch identifier-ARP
     private final HashSet<BECPNode> crashedNodes;// REAP+
     private final HashSet<BECPNode> joinedNodes;// REAP+
+	private final RecoveryExchangeId recoveryExchangeId; // REAP+ recovery exchange
     private Multimap<BECPNode, Integer> mainCache_d; // Q_d: main cache of d (EMP+)
     private Multimap<BECPNode, Integer> donatedCache; // Q: set of donated cache entries (EMP+)
     
-    public BECPPull(final Node sender, final int cycleNumber, final int size, final double value, final double weight, final ArrayList<BECPNode> neighborsLocalCache, final HashMap<Integer, BECPBlock> blockLocalCache, final boolean criticalPushFlag, final int l, final HashMap<Integer, Process> P, final A A, final C C, final HashSet<BECPNode> crashedNodes, final HashSet<BECPNode> joinedNodes, final LinkedHashSet<BECPBlock> localLedger, Multimap<BECPNode, Integer> mainCache_d, Multimap<BECPNode, Integer> donatedCache) {
+    public BECPPull(final Node sender, final int cycleNumber, final int size, final double value, final double weight, final ArrayList<BECPNode> neighborsLocalCache, final HashMap<Integer, BECPBlock> blockLocalCache, final boolean criticalPushFlag, final int l, final HashMap<Integer, Process> P, final A A, final C C, final HashSet<BECPNode> crashedNodes, final HashSet<BECPNode> joinedNodes, final LinkedHashSet<BECPBlock> localLedger, Multimap<BECPNode, Integer> mainCache_d, Multimap<BECPNode, Integer> donatedCache, RecoveryExchangeId recoveryExchangeId) {
         super(size + BECP_GOSSIP_SIZE_OVERHEAD, sender, GossipType.PULL);
         this.value = value;
         this.weight = weight;
@@ -44,6 +45,7 @@ public class BECPPull<B extends Block<B>> extends BECPBlockGossip<B> {
         this.crashedNodes = crashedNodes;
         this.joinedNodes = joinedNodes;
         this.localLedger = localLedger;
+		this.recoveryExchangeId = recoveryExchangeId;
         this.setMainCache_d(mainCache_d);
         this.setDonatedCache(donatedCache);
     }
@@ -114,5 +116,8 @@ public class BECPPull<B extends Block<B>> extends BECPBlockGossip<B> {
 	}
 	public void setDonatedCache(Multimap<BECPNode, Integer> donatedCache) {
 		this.donatedCache = donatedCache;
+	}
+	public RecoveryExchangeId getRecoveryExchangeId() {
+		return recoveryExchangeId;
 	}
 }

@@ -167,6 +167,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
         	Multimap<BECPNode, Integer> cache_1 = ArrayListMultimap.create();
         	Multimap<BECPNode, Integer> cache_2 = ArrayListMultimap.create();
         	boolean forward = false;
+			boolean applyRecoveryPullMass = true;
     		
         	RandomnessEngine randomnessEngine = this.peerBlockchainNode.getNetwork().getRandom();
             sender = (BECPNode) gossip.getSender();
@@ -212,19 +213,72 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         //##### REAP (Robust Epidemic Aggregation Protocol)#####//
                         //***** REAP_PLUS (Robust Epidemic Aggregation Protocol)*****//
                         if (REAP_PLUS) {
-                        	Key key = new Key(senderPush.getSender().nodeID, senderPush.getCycleNumber());
+                        	RecoveryExchangeId recoveryExchangeId = senderPush.getRecoveryExchangeId();
                         	if(senderPush.getCriticalPushFlag()) {
-                        		if(peer.getRecoveryCache().containsKey(key)) { // received a duplicate push message (detects a RePush).
-                                	//*System.out.println("received a RePush from " +sender.getNodeID()+" in the node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());               
-                        			if(senderPush.isReceivedPull()) {
-                        				peer.getRecoveryCache().remove(key); // do nothing
-                        			}else {
-                        				peer.getRecoveryCache().get(key).setTimeout(1); // to restore the masses.
-                        			}
-                            		break;
-                            	}else if(senderPush.getCycleNumber()<peer.getCycleNumber()){ // discard invalid RePush messages.
-                            		break;
-                            	}
+								if (recoveryExchangeId == null) {
+									throw new IllegalStateException("Critical REAP+ Push has no recovery exchange ID.");
+								}
+								/*
+								* The exchange ID must identify the node that originally
+								* created this Push.
+								*/
+								if (recoveryExchangeId.getSenderNodeId() != senderPush.getSender().getNodeID()) {
+									throw new IllegalStateException(
+											"Recovery exchange "
+											+ recoveryExchangeId
+											+ " does not match Push sender "
+											+ senderPush.getSender().getNodeID()
+											+ ".");
+								}
+								/*
+								* A RePush is meaningful only if this receiver already
+								* knows the corresponding original exchange.
+								*
+								* If the original Push never arrived, the sender may have
+								* already restored its mass. Treating this RePush as a new
+								* Push would duplicate that mass.
+								*/
+								if (senderPush.isRecoveryRePush() && !peer.getRecoveryExchangeCache().containsKey(recoveryExchangeId)) {
+									break;
+								}
+								if (peer.getRecoveryExchangeCache().containsKey(recoveryExchangeId)) {
+									RecoveryEntry recoveryEntry = peer.getRecoveryExchangeCache().get(recoveryExchangeId);
+									/*
+									* The exchange is already known.
+									*
+									* If this is merely a duplicate of the original Push,
+									* ignore it completely. Only an explicitly marked
+									* RePush is allowed to drive recovery state.
+									*/
+									if (!senderPush.isRecoveryRePush()) {
+										break;
+									}
+									/*
+									* A terminal entry is a tombstone.
+									* Delayed or duplicate messages for the same exchange must never make it active again.
+									*/
+									if (recoveryEntry.isRecoveryExchangeTerminal()) {
+										break;
+									}
+									if (senderPush.isReceivedPull()) {
+										/*
+										* The sender received our Pull and acknowledged the
+										* exchange with a RePush.
+										*
+										* Keep the entry as a MERGED tombstone instead of
+										* deleting it.
+										*/
+										recoveryEntry.transitionRecoveryExchangeState(RecoveryExchangeState.MERGED);
+									} else {
+										/*
+										* Notification RePush: sender did not receive the Pull.
+										* Keep the exchange PENDING but make restoration imminent.
+										*/
+										recoveryEntry.setTimeout(1);
+									}
+
+									break;
+								}
                         	}
                         	
                         	peer.getCrashedNodes().addAll(senderPush.getCrashedNodes()); // update the list of crashed nodes.
@@ -384,10 +438,17 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setValue(senderPush.getValue())
                                         		.setWeight(senderPush.getWeight())
                                         		.setBlockLocalCache(senderPush.getBlockLocalCache())
+												.setCriticalPushFlag(senderPush.getCriticalPushFlag())
+												.setIsReceivedPull(senderPush.isReceivedPull())
+												.setRecoveryRePush(senderPush.isRecoveryRePush())
+												.setCrashedNodes(senderPush.getCrashedNodes())
+												.setJoinedNodes(senderPush.getJoinedNodes())
+												.setIsNewJoined(senderPush.isNewJoined())
                                         		.setNeighborsLocalCache(senderPush.getNeighborsLocalCache())
                                         		.setD(senderPush.getD())
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
+												.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         	} else if (senderPush.getH() == H_MAX) {
@@ -404,11 +465,18 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setCycleNumber(senderPush.getCycleNumber())
                                         		.setValue(senderPush.getValue())
                                         		.setWeight(senderPush.getWeight())
-                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
-                                        		.setNeighborsLocalCache(senderPush.getNeighborsLocalCache())
+												.setBlockLocalCache(senderPush.getBlockLocalCache())
+												.setCriticalPushFlag(senderPush.getCriticalPushFlag())
+												.setIsReceivedPull(senderPush.isReceivedPull())
+												.setRecoveryRePush(senderPush.isRecoveryRePush())
+												.setCrashedNodes(senderPush.getCrashedNodes())
+												.setJoinedNodes(senderPush.getJoinedNodes())
+												.setIsNewJoined(senderPush.isNewJoined())
+												.setNeighborsLocalCache(senderPush.getNeighborsLocalCache())
                                         		.setD(senderPush.getD())
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
+                                        		.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         	}
@@ -524,11 +592,18 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setCycleNumber(senderPush.getCycleNumber())
                                         		.setValue(senderPush.getValue())
                                         		.setWeight(senderPush.getWeight())
-                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
-                                        		.setMainCache_S(senderMainCache_s)
+												.setBlockLocalCache(senderPush.getBlockLocalCache())
+												.setCriticalPushFlag(senderPush.getCriticalPushFlag())
+												.setIsReceivedPull(senderPush.isReceivedPull())
+												.setRecoveryRePush(senderPush.isRecoveryRePush())
+												.setCrashedNodes(senderPush.getCrashedNodes())
+												.setJoinedNodes(senderPush.getJoinedNodes())
+												.setIsNewJoined(senderPush.isNewJoined())
+												.setMainCache_S(senderMainCache_s)
                                         		.setD(senderPush.getD())
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
+												.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         		//*System.out.println("forwarded a message from "+sender.getNodeID()+" to "+ destination.getNodeID()+" by node "+peer.nodeID+" at "+ peer.getCycleNumber()); 
@@ -546,11 +621,18 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setCycleNumber(senderPush.getCycleNumber())
                                         		.setValue(senderPush.getValue())
                                         		.setWeight(senderPush.getWeight())
-                                        		.setBlockLocalCache(senderPush.getBlockLocalCache())
-                                        		.setMainCache_S(senderMainCache_s)
+												.setBlockLocalCache(senderPush.getBlockLocalCache())
+												.setCriticalPushFlag(senderPush.getCriticalPushFlag())
+												.setIsReceivedPull(senderPush.isReceivedPull())
+												.setRecoveryRePush(senderPush.isRecoveryRePush())
+												.setCrashedNodes(senderPush.getCrashedNodes())
+												.setJoinedNodes(senderPush.getJoinedNodes())
+												.setIsNewJoined(senderPush.isNewJoined())
+												.setMainCache_S(senderMainCache_s)
                                         		.setD(senderPush.getD())
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
+												.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         		//*System.out.println("Lastly, forwarded a message from "+sender.getNodeID()+" to "+ destination.getNodeID()+" by node "+peer.nodeID+" at "+ peer.getCycleNumber()); 
@@ -559,7 +641,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         //##### EMP+ (Expander Membership Protocol)#####//
                         //***** Perform PULL *****//
                         if (!forward) {
-                            performPull(peer, sender, peerValue, peerWeight, copyNeighborCache, copyBlockCache, updatedLedger, peer, donatedCache, mainCache_d);
+                            performPull(peer, sender, peerValue, peerWeight, copyNeighborCache, copyBlockCache, updatedLedger, peer, donatedCache, mainCache_d, senderPush.getRecoveryExchangeId());
                         }
                         //##### Perform PULL #####//
                         //*System.out.println("sent a pull from "+peer.getNodeID()+" to "+ sender.getNodeID()+" at "+ peer.getSimulator().getSimulationTime()); 
@@ -592,8 +674,8 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             	//System.out.println("node " + sender.getNodeID()+" with cycle "+senderPush.getCycleNumber()+" recorded in "+ peer.getNodeID());
                             	Key key = new Key(senderPush.getSender().nodeID, senderPush.getCycleNumber());
                             	HashMap<Integer, ReplicaBlock> replicaBlockCache = new HashMap<>();
-                            	peer.getRecoveryCache().put(key, new RecoveryEntry(senderPush.getSender(), peer.getCycleNumber(), REPUSH_TIMEOUT, peer.getValue(), peer.getWeight(), replicaBlockCache));
-                            	//System.out.println("Recovery cache size is "+peer.getRecoveryCache().size()+ " for node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());
+								peer.getRecoveryCache().put(key, new RecoveryEntry(senderPush.getSender(), peer.getCycleNumber(), REPUSH_TIMEOUT, peer.getValue(), peer.getWeight(), replicaBlockCache));
+				                //System.out.println("Recovery cache size is "+peer.getRecoveryCache().size()+ " for node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());
                             }
                             //-----------------------------------------------
                             Cv = coefficientOfVariance(peer.getReapQueue());
@@ -616,23 +698,55 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             peer.setWeight(peerWeight + senderWeight);
                             if(senderPush.getCriticalPushFlag()){ // replicate critical pairs (v, w, [vp, wp, va, wa]).
                             	//System.out.println("node " + sender.getNodeID()+" with cycle "+senderPush.getCycleNumber()+" recorded in "+ peer.getNodeID());
-                            	Key key = new Key(senderPush.getSender().nodeID, senderPush.getCycleNumber());
+                            	RecoveryExchangeId recoveryExchangeId = senderPush.getRecoveryExchangeId();
+								if (recoveryExchangeId == null) {
+									throw new IllegalStateException("Critical REAP+ Push has no recovery exchange ID.");
+								}
                             	//-------------------------------------------------------------------
-                            	HashMap<Integer, ReplicaBlock> replicaBlockCache = new HashMap<>();
-                            	peerBlockLocalCache = peer.getBlockLocalCache();
-                            	if(peerBlockLocalCache.size()>0){
-                                    for (BECPBlock peerBlock:peerBlockLocalCache.values()) {
-                                    	ReplicaBlock replicaBlock = new ReplicaBlock(); 
-                                    	replicaBlock.setVPropagation(peerBlock.getVPropagation());
-                                    	replicaBlock.setWPropagation(peerBlock.getWPropagation());
-                                    	replicaBlock.setVAgreement(peerBlock.getVAgreement());
-                                    	replicaBlock.setWAgreement(peerBlock.getWAgreement());
-                                    	replicaBlock.setBlockCreator(peerBlock.getCreator());
-                                    	replicaBlockCache.put(peerBlock.getHeight(), replicaBlock);
-                                    }
-                                }
-                            	//-------------------------------------------------------------------
-                            	peer.getRecoveryCache().put(key, new RecoveryEntry(senderPush.getSender(), peer.getCycleNumber(), REPUSH_TIMEOUT, peer.getValue(), peer.getWeight(), replicaBlockCache));
+								HashMap<Integer, ReplicaBlock> replicaBlockCache = new HashMap<>();
+								peerBlockLocalCache = peer.getBlockLocalCache();
+								if (peerBlockLocalCache.size() > 0) {
+									for (BECPBlock peerBlock : peerBlockLocalCache.values()) {
+										ReplicaBlock replicaBlock = new ReplicaBlock();
+										replicaBlock.setVPropagation(peerBlock.getVPropagation());
+										replicaBlock.setWPropagation(peerBlock.getWPropagation());
+										replicaBlock.setVAgreement(peerBlock.getVAgreement());
+										replicaBlock.setWAgreement(peerBlock.getWAgreement());
+										replicaBlock.setBlockCreator(peerBlock.getCreator());
+										replicaBlock.setBlockHash(peerBlock.getHash());
+										replicaBlockCache.put(peerBlock.getHeight(), replicaBlock);
+									}
+								}
+								/*
+								* Store the PTP mass received in the sender's Push
+								* separately from this receiver's Pull mass.
+								*/
+								HashMap<Integer, ReplicaBlock> incomingPushBlockCache = new HashMap<>();
+								HashMap<Integer, BECPBlock> incomingBlockLocalCache = senderPush.getBlockLocalCache();
+								if (incomingBlockLocalCache != null) {
+									for (BECPBlock incomingBlock : incomingBlockLocalCache.values()) {
+										ReplicaBlock incomingReplicaBlock = new ReplicaBlock();
+										incomingReplicaBlock.setVPropagation(incomingBlock.getVPropagation());
+										incomingReplicaBlock.setWPropagation(incomingBlock.getWPropagation());
+										incomingReplicaBlock.setVAgreement(incomingBlock.getVAgreement());
+										incomingReplicaBlock.setWAgreement(incomingBlock.getWAgreement());
+										incomingReplicaBlock.setBlockCreator(incomingBlock.getCreator());
+										incomingReplicaBlock.setBlockHash(incomingBlock.getHash());
+										incomingPushBlockCache.put(incomingBlock.getHeight(), incomingReplicaBlock);
+									}
+								}
+								peer.getRecoveryExchangeCache().put(
+										recoveryExchangeId,
+										new RecoveryEntry(
+												senderPush.getSender(),
+												peer.getCycleNumber(),
+												REPUSH_TIMEOUT,
+												peerValue,
+												peerWeight,
+												senderPush.getValue(),
+												senderPush.getWeight(),
+												replicaBlockCache,
+												incomingPushBlockCache));
                             	//System.out.println("Recovery cache size is "+peer.getRecoveryCache().size()+ " for node "+ peer.getNodeID()+" at "+peer.getSimulator().getSimulationTime());
                             }
                         }
@@ -719,6 +833,55 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         }
                     }
                     break;
+				case FINAL_CONFIRMATION:
+					BECPFinalConfirmation finalConfirmation = (BECPFinalConfirmation) blockGossip;
+					int confirmationHeight = finalConfirmation.getHeight();
+					BECPBlock confirmationBlock = finalConfirmation.getBlock();
+					int confirmerNodeId = finalConfirmation.getConfirmerNodeId();
+					MembershipSnapshot confirmationSnapshot = peer.getOrCreateMembershipSnapshot(confirmationHeight);
+
+					// The message must refer to this height's fixed sigma_h.
+					if (!confirmationSnapshot.getSnapshotId().equals(finalConfirmation.getSnapshotId())) {
+						break;
+					}
+
+					// The block carried by the confirmation must match h.
+					if (confirmationBlock == null || confirmationBlock.getHeight() != confirmationHeight) {
+						break;
+					}
+
+					// The claimed confirmer must match the original gossip sender.
+					if (finalConfirmation.getSender().getNodeID() != confirmerNodeId) {
+						break;
+					}
+
+					// Only members of M_h may contribute to q_h.
+					if (!confirmationSnapshot.containsMember(confirmerNodeId)) {
+						break;
+					}
+
+					boolean newConfirmation = peer.recordFinalConfirmation(confirmationHeight, confirmationBlock, confirmerNodeId);
+
+					/*
+					* Flood a newly learned valid confirmation through the
+					* existing BECP/NCP neighbor graph.
+					*
+					* Important: we forward the SAME finalConfirmation object.
+					* We do not construct a new BECPFinalConfirmation with the
+					* relay as sender, so the original confirmer identity is
+					* preserved.
+					*/
+					if (newConfirmation) {
+						GossipMessage forwardedConfirmation = new GossipMessage(finalConfirmation);
+						for (BECPNode neighbor :peer.getNeighborsLocalCache()) {
+							if (neighbor.getNodeID() != peer.getNodeID()) {
+								peer.gossipMessage(forwardedConfirmation, neighbor);
+							}
+						}
+					}
+
+					break;
+				
                 case PULL:
                     senderPull = (BECPPull<B>) blockGossip;
                     if (true) {
@@ -765,6 +928,69 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         //##### REAP (Robust Epidemic Aggregation Protocol)#####//
                         //***** REAP_PLUS (Robust Epidemic Aggregation Protocol)*****//
                         if(REAP_PLUS){
+							RecoveryExchangeId receivedExchangeId = senderPull.getRecoveryExchangeId();
+							PushEntry matchedPushEntry = null;
+							applyRecoveryPullMass = true;
+							/*
+							* A normal REAP+ Pull that belongs to a recovery exchange
+							* may affect mass only while that exact exchange is PENDING.
+							*/
+							if (receivedExchangeId != null) {
+								if (receivedExchangeId.getSenderNodeId() != peer.getNodeID()) {
+									throw new IllegalStateException(
+											"Received Pull contains recovery exchange "
+											+ receivedExchangeId
+											+ " but node "
+											+ peer.getNodeID()
+											+ " is not the exchange origin.");
+								}
+
+								for (PushEntry pushEntry : peer.getPushEntriesBuffer()) {
+									RecoveryExchangeId pendingExchangeId = pushEntry.getRecoveryExchangeId();
+									if (pendingExchangeId == null) {
+										continue;
+									}
+									if (!pendingExchangeId.equals(receivedExchangeId)) {
+										continue;
+									}
+
+									if (pushEntry.getDestination().getNodeID()!= senderPull.getSender().getNodeID()) {
+										throw new IllegalStateException(
+												"Recovery Pull for exchange "
+												+ receivedExchangeId
+												+ " came from unexpected node "
+												+ senderPull.getSender().getNodeID()
+												+ ".");
+									}
+
+									matchedPushEntry = pushEntry;
+									break;
+								}
+
+								/*
+								* No live record means this is a delayed/duplicate Pull
+								* for an exchange that has already been completed/removed.
+								*/
+								if (matchedPushEntry == null) {
+									applyRecoveryPullMass = false;
+								} else if (
+										matchedPushEntry.isRecoveryExchangeTerminal()) {
+									/*
+									* MERGED  -> duplicate Pull
+									* RESTORED -> late Pull after sender restoration
+									*
+									* Neither may apply mass again.
+									*/
+									applyRecoveryPullMass = false;
+								} else {
+									boolean merged = matchedPushEntry.transitionRecoveryExchangeState(RecoveryExchangeState.MERGED);
+									if (merged) {
+										matchedPushEntry.setReceivedPull(true);
+									} else {
+										applyRecoveryPullMass = false;
+									}
+								}
+							}
                         	if(peer.isCrashed) {
                         		//System.out.println("node "+peer.nodeID+" received updates from " +sender.nodeID);
                     			peer.isCrashed = false;
@@ -772,12 +998,8 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     			propagationCyclesPTP.clear();
                     			tempCrashedEvents_1.clear();
                     			tempCrashedEvents_2.clear();
-                        		peer.getLocalLedger().clear();
-                        		peer.getLocalLedger().addAll(senderPull.getLocalLedger()); // update the local ledger.
-                        		BECPBlock[] blockArray = peer.getLocalLedger().toArray(new BECPBlock[0]);
-                        		BECPBlock lastConfirmedBlock = blockArray[blockArray.length - 1];
-                        		peer.setLastConfirmedBlock(lastConfirmedBlock);
-                        		peer.setCurrentPreferredBlock(lastConfirmedBlock);
+								mergeRecoveredLedger(peer, senderPull.getLocalLedger());
+								peer.setCurrentPreferredBlock(peer.getLastConfirmedBlock());
                         		peer.setCycleNumber(senderPull.getCycleNumber());
                         		peer.setJoinCycle(senderPull.getCycleNumber());
                         		//System.out.println("the updated cycle is "+ peer.getCycleNumber());
@@ -795,7 +1017,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         			}
                             	}
                              //****************Joining a Node*********************
-                    		}else {
+                    		}else if (applyRecoveryPullMass) {
                     			peerValue = peer.getValue();
                                 peerWeight = peer.getWeight();
                                 senderValue = senderPull.getValue();
@@ -805,11 +1027,6 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		}
                         	peer.getCrashedNodes().addAll(senderPull.getCrashedNodes()); // update the list of crashed nodes.
                         	peer.getJoinedNodes().addAll(senderPull.getJoinedNodes()); // update the list of joined nodes.
-                        	for(PushEntry pushEntry:peer.getPushEntriesBuffer()){
-                             	if((pushEntry.getDestination()==senderPull.getSender())&&(pushEntry.getCycleNumber()==senderPull.getCycleNumber())) {
-                             		pushEntry.setReceivedPull(true);
-                             	}
-                             }
                         }
                         //##### REAP_PLUS (Robust Epidemic Aggregation Protocol)#####//
                         //***** ARP (Adaptive Restart Protocol)*****//
@@ -886,12 +1103,21 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         //***** PTP (Phase Transition Protocol)*****//
                         if (PTP) {
                             senderBlockLocalCache = senderPull.getBlockLocalCache();
-                            for (BECPBlock blockSender:senderBlockLocalCache.values()) {
-                            	if(!tempJoinedEvent.containsKey(blockSender)&&blockSender.getCycleNumber()<=peer.getJoinCycle()) { // check only for rejoined nodes
-                            		tempJoinedEvent.put(blockSender, blockSender);
-                            	}
-                            	resolveDuplication(blockSender, peer);
-                            }
+    						/*
+							* A duplicate or delayed REAP+ Pull must not apply
+							* its block-specific PTP mass again.
+							*
+							* For non-REAP+ operation, PTP behavior is unchanged.
+							*/
+							if (applyRecoveryPullMass) {
+								for (BECPBlock blockSender : senderBlockLocalCache.values()) {
+									if (!tempJoinedEvent.containsKey(blockSender) && blockSender.getCycleNumber() <= peer.getJoinCycle()) {
+										tempJoinedEvent.put(blockSender, blockSender);
+									}
+
+									resolveDuplication(blockSender, peer);
+								}
+							}
                         }
                         //##### PTP (Phase Transition Protocol)#####//
                         //***** ECP (Epidemic Consensus Protocol)*****//
@@ -1051,9 +1277,23 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
             Iterator<PushEntry> iterator_2 = peer.getPushEntriesBuffer().iterator();
             while(iterator_2.hasNext()){
             	PushEntry pushEntry = iterator_2.next();
+				/*
+				* A terminal sender-side exchange must never restore its mass again.
+				*/
+				if (pushEntry.isRecoveryExchangeTerminal()) {
+					continue;
+				}
             	if((!pushEntry.isReceivedPull())) {
             		pushEntry.decrementTimeout();
             		if(pushEntry.getTimeout()==0) {
+						boolean restored = pushEntry.transitionRecoveryExchangeState(RecoveryExchangeState.RESTORED);
+						if (!restored) {
+							throw new IllegalStateException(
+							"Safety violation: sender recovery mass "
+							+ "would be restored more than once for exchange "
+							+ pushEntry.getRecoveryExchangeId()
+							+ ".");
+						}
             			//System.out.println("A churn was detected (by PULL MESSAGE) in node "+peer.getNodeID()+" (for node "+pushEntry.getDestination().getNodeID()+" from cycle "+ pushEntry.getCycleNumber()+") at cycle "+peer.getCycleNumber()+"; mass restoration was done!");
                 		peerValue = peer.getValue()+pushEntry.getAggregationValue();
                         peerWeight = peer.getWeight()+pushEntry.getAggregationWeight();
@@ -1065,7 +1305,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         	ReplicaBlock replicaBlock = pushEntry.getReplicaBlockCache().get(blockID);
                         	if(peerBlockLocalCache.containsKey(blockID)) {
                             	BECPBlock becpBlock = peerBlockLocalCache.get(blockID);
-                            	if(becpBlock.getCreator()==replicaBlock.getBlockCreator()) {
+                            	if (becpBlock.getHash() == replicaBlock.getBlockHash()) {
                             		if(becpBlock.getCycleNumber()<=pushEntry.getCycleNumber()) {
                             			tempBlocks.add(becpBlock);
                             		}
@@ -1187,7 +1427,11 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
         }
         //##### ECP(Epidemic Consensus Protocol)#####//
         //***** Perform PUSH *****//
-        performPush(peer, destination, peerValue, peerWeight, copyNeighborCache, copyBlockCache, copyMainCache_s);
+		RecoveryExchangeId recoveryExchangeId = null;
+		if (REAP_PLUS && peer.getCriticalPushFlag()) {
+			recoveryExchangeId = peer.createRecoveryExchangeId();
+		}
+        performPush(peer, destination, peerValue, peerWeight, copyNeighborCache, copyBlockCache, copyMainCache_s, recoveryExchangeId);
         //##### Perform PUSH #####//
         simulator.putEvent(new NodeCycleEvent<BECPNode>(peer), BECPScenario.CYCLE_TIME);
         //System.out.println("next event was set to "+simulator.getSimulationTime()+BECPScenario.CYCLETIME+" for node "+peer.getNodeID());
@@ -1248,19 +1492,22 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 		replicaBlock.setVAgreement(becpBlock.getVAgreement());
                 		replicaBlock.setWAgreement(becpBlock.getWAgreement());
                 		replicaBlock.setBlockCreator(becpBlock.getCreator());
+						replicaBlock.setBlockHash(becpBlock.getHash());
                 		replicaBlockCache.put(becpBlock.getHeight(), replicaBlock);
                 	}
             	}
             	//------------------------------------- ***** *****
-                peer.getPushEntriesBuffer().add(new PushEntry(destination, peer.getCycleNumber(), PULL_TIMEOUT, peer.getValue(), peer.getWeight(),replicaBlockCache));
-            }
+				PushEntry pushEntry = new PushEntry(destination, peer.getCycleNumber(), PULL_TIMEOUT, peer.getValue(), peer.getWeight(), replicaBlockCache);
+				pushEntry.setRecoveryExchangeId(recoveryExchangeId);
+				peer.getPushEntriesBuffer().add(pushEntry);       
+			}
             temp.clear();
             for(PushEntry pushEntry:peer.getPushEntriesBuffer()){
                 if(pushEntry.getCycleNumber()<peer.getCycleNumber()){
                 	if(pushEntry.isReceivedPull()) { 
                 		this.peerBlockchainNode.gossipMessage( // perform a RePush.
                                 new GossipMessage(
-                                		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(pushEntry.isReceivedPull()).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                                		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(pushEntry.isReceivedPull()).setRecoveryRePush(true).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).setRecoveryExchangeId(pushEntry.getRecoveryExchangeId()).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                                 ), pushEntry.getDestination());
                         
                         temp.add(pushEntry);
@@ -1268,7 +1515,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                 	}else if(pushEntry.getTimeout()==0){
                 		this.peerBlockchainNode.gossipMessage( // perform a notification RePush.
                 				new GossipMessage(
-                                		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(pushEntry.isReceivedPull()).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
+                                		new GossipMessageBuilder().setCycleNumber(pushEntry.getCycleNumber()).setValue(pushEntry.getAggregationValue()).setWeight(pushEntry.getAggregationWeight()).setNeighborsLocalCache(copyNeighborCache).setBlockLocalCache(copyBlockCache).setCriticalPushFlag(true).setIsReceivedPull(pushEntry.isReceivedPull()).setRecoveryRePush(true).setCrashedNodes(peer.getCrashedNodes()).setJoinedNodes(peer.getJoinedNodes()).setIsNewJoined(false).setRecoveryExchangeId(pushEntry.getRecoveryExchangeId()).buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                 				), pushEntry.getDestination());
                 
                         temp.add(pushEntry);
@@ -1313,46 +1560,74 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
             	}
             }
             //--------------------------------------------- 
-            temp2.clear();
-            for (Key keyEntry:peer.getRecoveryCache().keySet()) { // perform "CHURN DETECTION" and "mass correction".
-            	RecoveryEntry recoveryEntry = peer.getRecoveryCache().get(keyEntry);
+            for (RecoveryExchangeId recoveryExchangeKey : peer.getRecoveryExchangeCache().keySet()) { // perform "CHURN DETECTION" and "mass correction".
+            	RecoveryEntry recoveryEntry = peer.getRecoveryExchangeCache().get(recoveryExchangeKey);
+				/*
+				* MERGED/RESTORED entries are tombstones.
+				* They must never time out or alter mass again.
+				*/
+				if (recoveryEntry.isRecoveryExchangeTerminal()) {
+					continue;
+				}
             	recoveryEntry.decrementTimeout();
                 if(recoveryEntry.getTimeout()==0){ // timeout value expired, FAILURE DETECTION, correct mass.
-                	//System.out.println("A churn was detected in node "+peer.getNodeID()+" (for node "+recoveryEntry.getSender().getNodeID()+" from cycle "+ keyEntry.getCycleNumber()+") at cycle "+peer.getCycleNumber()+"; mass restoration was done!");
-                	temp2.add(keyEntry);
+                	//System.out.println("A churn was detected in node "+peer.getNodeID()+" (for node "+recoveryEntry.getSender().getNodeID()+" from cycle "+ recoveryExchangeKey.getCycleNumber()+") at cycle "+peer.getCycleNumber()+"; mass restoration was done!");
+                	boolean restored = recoveryEntry.transitionRecoveryExchangeState(RecoveryExchangeState.RESTORED);
+					if (!restored) {
+						throw new IllegalStateException(
+						"Safety violation: receiver recovery mass "
+						+ "would be restored more than once for exchange "
+						+ recoveryExchangeKey
+						+ ".");
+					}
                 	if(peerBlockLocalCache.size()>0) {
-                		peerValue = peer.getValue()+recoveryEntry.getReplicaValue(); // restore the Masses for the system size.
-                        peerWeight = peer.getWeight()+recoveryEntry.getReplicaWeight();
+                		peerValue = peer.getValue()+recoveryEntry.getReplicaValue() - recoveryEntry.getIncomingPushValue(); // restore the Masses for the system size.
+                        peerWeight = peer.getWeight()+recoveryEntry.getReplicaWeight() - recoveryEntry.getIncomingPushWeight();
                         peer.setValue(peerValue);
                         peer.setWeight(peerWeight);
                         //------------------------------------- ***** *****
                         ArrayList<BECPBlock> tempBlocks = new ArrayList<>();
-                        for(Integer entry:recoveryEntry.getReplicaBlockCache().keySet()) {
-                        	ReplicaBlock replicaBlock = recoveryEntry.getReplicaBlockCache().get(entry);
-                        	if(peerBlockLocalCache.containsKey(entry)) {
-                        		BECPBlock becpBlock = peerBlockLocalCache.get(entry);
-                        		if(becpBlock.getCreator()==replicaBlock.getBlockCreator()) { // restore the Masses for blocks.
-                        			if(becpBlock.getCycleNumber()<=recoveryEntry.getCycleNumber()) {
-                        				tempBlocks.add(becpBlock);
-                        			}
-                                	double vp = becpBlock.getVPropagation()+replicaBlock.getVPropagation();
-                                    double wp = becpBlock.getWPropagation()+replicaBlock.getWPropagation();
-                                    double va = becpBlock.getVAgreement()+replicaBlock.getVAgreement();
-                                    double wa = becpBlock.getWAgreement()+replicaBlock.getWAgreement();
-                                    becpBlock.setVPropagation(vp);
-                                    becpBlock.setWPropagation(wp);
-                                    becpBlock.setVAgreement(va);
-                                    becpBlock.setWAgreement(wa);
-                        		}
-                        	}
-                        }
+						for (Integer entry : recoveryEntry.getReplicaBlockCache().keySet()) {
+							ReplicaBlock replicaBlock = recoveryEntry.getReplicaBlockCache().get(entry);
+							ReplicaBlock incomingPushBlock = recoveryEntry.getIncomingPushBlockCache().get(entry);
+							if (peerBlockLocalCache.containsKey(entry)) {
+								BECPBlock becpBlock = peerBlockLocalCache.get(entry);
+								if (becpBlock.getHash() == replicaBlock.getBlockHash()) {
+									if (becpBlock.getCycleNumber() <= recoveryEntry.getCycleNumber()) {
+										tempBlocks.add(becpBlock);
+									}
+									double incomingVp = 0.0;
+									double incomingWp = 0.0;
+									double incomingVa = 0.0;
+									double incomingWa = 0.0;
+									/*
+									* Subtract incoming Push mass only when it belongs
+									* to the same block currently represented here.
+									*/
+									if (incomingPushBlock != null && incomingPushBlock.getBlockHash() == becpBlock.getHash()) {
+										incomingVp = incomingPushBlock.getVPropagation();
+										incomingWp = incomingPushBlock.getWPropagation();
+										incomingVa = incomingPushBlock.getVAgreement();
+										incomingWa = incomingPushBlock.getWAgreement();
+									}
+									double vp = becpBlock.getVPropagation() + replicaBlock.getVPropagation() - incomingVp;
+									double wp =	becpBlock.getWPropagation() + replicaBlock.getWPropagation() - incomingWp;
+									double va = becpBlock.getVAgreement() + replicaBlock.getVAgreement() - incomingVa;
+									double wa =becpBlock.getWAgreement() + replicaBlock.getWAgreement() - incomingWa;
+									becpBlock.setVPropagation(vp);
+									becpBlock.setWPropagation(wp);
+									becpBlock.setVAgreement(va);
+									becpBlock.setWAgreement(wa);
+								}
+							}
+						}
                     	HashMap<BECPNode, ArrayList<BECPBlock>> crashedNodeBlocks = new HashMap<>();
                     	crashedNodeBlocks.put((BECPNode) recoveryEntry.getSender(), tempBlocks);
                         tempCrashedEvents_2.put(recoveryEntry, crashedNodeBlocks);
                       //------------------------------------- ***** *****
                 	}else if(peerBlockLocalCache.size()==0){
-                		peerValue = peer.getValue()+recoveryEntry.getReplicaValue();
-                        peerWeight = peer.getWeight()+recoveryEntry.getReplicaWeight();
+                		peerValue = peer.getValue()+recoveryEntry.getReplicaValue() - recoveryEntry.getIncomingPushValue();
+                        peerWeight = peer.getWeight()+recoveryEntry.getReplicaWeight() - recoveryEntry.getIncomingPushWeight();
                         peer.setValue(peerValue);
                         peer.setWeight(peerWeight);
                 		peer.getCrashedNodes().add((BECPNode) recoveryEntry.getSender()); // update the list of crashed nodes.
@@ -1363,11 +1638,6 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                         peer.getNeighborsLocalCache().remove(recoveryEntry.getSender()); //********** (added) update the neighbours local cache
                     }
                     
-                }
-            }
-            if(temp2.size()>0){
-                for(Key entry:temp2){
-                    peer.getRecoveryCache().remove(entry);
                 }
             }
             //-------------------------------------
@@ -1403,29 +1673,84 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     	if ((numOfParticipants > 0) && (Math.abs((numOfParticipants - (vAgreement / wAgreement))/numOfParticipants) <= EPSILON_2)) {
                     		int currentValue = agreementCyclesPTP.getOrDefault(becpBlock, 0);
                         	agreementCyclesPTP.put(becpBlock, currentValue + 1);
-                            if (agreementCyclesPTP.get(becpBlock) == MIN_CONSECUTIVE_CYCLES_THRESHOLD) { // COMMIT STATE
-                            	BECPScenario.consensusTimes.add(peer.getSimulator().getSimulationTime()-becpBlock.getCreationTime()); // record the consensus time.
-                            	becpBlock.setState(BECPBlock.State.COMMIT);
-                            	//**********************Some application-specific action********************//
-                                //System.out.println("Consensus occurred in the node "+peer.getNodeID()+" for block "+ becpBlock.getHeight()+" hash: "+becpBlock.getHash().hashCode());
-                            	if(RECORD_LEDGERS) {
-                                    this.confirmedBlocks.add((B) becpBlock); // update the blockchain-local ledger.
-                                    peer.addToLocalLedger(becpBlock);
-                                    orderLedger(peer, peer.getLocalLedger());
-                                }
-                                if (WRITE_CONSENSUS_LOGS) { // write logs for peers.
-                                    writer.println("Consensus occurred in node " + peer.getNodeID() + " for the block " + becpBlock.getHeight() + " at " + currentTime);
-                                    writer.flush();
-                                }
-                                if(becpBlock.getHeight()>peer.getLastConfirmedBlock().getHeight()) { // update the last confirmed block with the highest ID.
-                                	peer.setLastConfirmedBlock(becpBlock);
-                                }
-                                agreementCyclesPTP.put(becpBlock, 0);
-                            }
+							if (agreementCyclesPTP.get(becpBlock) == MIN_CONSECUTIVE_CYCLES_THRESHOLD) { // CONFIRMATION STATE
+								// Fix M_h and sigma_h before entering the confirmation phase.
+								peer.getOrCreateMembershipSnapshot(becpBlock.getHeight());
+								becpBlock.setState(BECPBlock.State.CONFIRMATION);
+								agreementCyclesPTP.put(becpBlock, 0);
+							}
                         } else {
                         	agreementCyclesPTP.put(becpBlock, 0); // reset the counter.
                         }
                         break;
+					case CONFIRMATION:
+						MembershipSnapshot membershipSnapshot = peer.getOrCreateMembershipSnapshot(becpBlock.getHeight());
+						boolean finalVoteRecorded = peer.recordPersistentFinalVote(becpBlock.getHeight(), becpBlock);
+						if (finalVoteRecorded) {
+							if (!membershipSnapshot.containsMember(peer.getNodeID())) {
+								throw new IllegalStateException(
+										"Node "
+										+ peer.getNodeID()
+										+ " is not a member of M_h at height "
+										+ becpBlock.getHeight()
+										+ ".");
+							}
+
+							peer.recordFinalConfirmation(becpBlock.getHeight(), becpBlock, peer.getNodeID());
+							BECPFinalConfirmation finalConfirmation = new BECPFinalConfirmation(
+									peer,
+									becpBlock.getHeight(),
+									becpBlock,
+									membershipSnapshot.getSnapshotId());
+
+							GossipMessage confirmationMessage = new GossipMessage(finalConfirmation);
+							for (BECPNode neighbor : peer.getNeighborsLocalCache()) {
+								if (neighbor.getNodeID() != peer.getNodeID()) {
+									peer.gossipMessage(confirmationMessage, neighbor);
+								}
+							}
+						}
+
+						int confirmationCount = peer.getFinalConfirmationCount(becpBlock.getHeight(), becpBlock);
+						int quorumSize = membershipSnapshot.getQuorumSize();
+						boolean quorumReached = confirmationCount >= quorumSize;
+						boolean parentCommitted = isParentCommittedLocally(peer, becpBlock);
+
+						if (quorumReached && parentCommitted) {
+							becpBlock.setState(BECPBlock.State.COMMIT);
+							BECPScenario.consensusTimes.add(peer.getSimulator().getSimulationTime() - becpBlock.getCreationTime());
+							/*
+							* The committed ledger is protocol state, not optional logging.
+							* It must always be updated because parent-commit checks and
+							* committed-block immutability depend on it.
+							*/
+							this.confirmedBlocks.add((B) becpBlock);
+							peer.addToLocalLedger(becpBlock);
+							orderLedger(peer, peer.getLocalLedger());
+
+							if (WRITE_CONSENSUS_LOGS) {
+								writer.println(
+										"Consensus occurred in node "
+										+ peer.getNodeID()
+										+ " for the block "
+										+ becpBlock.getHeight()
+										+ " at "
+										+ currentTime
+										+ " with "
+										+ confirmationCount
+										+ "/"
+										+ quorumSize
+										+ " final confirmations.");
+
+								writer.flush();
+							}
+
+							if (becpBlock.getHeight() > peer.getLastConfirmedBlock().getHeight()) {
+								peer.setLastConfirmedBlock(becpBlock);
+							}
+						}
+
+						break;
                 }
             }
             if(peerBlockLocalCache.size() > 0) {
@@ -1516,7 +1841,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 
 	private void performPull(final BECPNode peer, final BECPNode sender, final double peerValue, final double peerWeight,
 			ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache,
-			final LinkedHashSet<BECPBlock> updatedLedger, final BECPNode d, final Multimap<BECPNode, Integer> donatedCache, final Multimap<BECPNode, Integer> mainCache_d) {
+			final LinkedHashSet<BECPBlock> updatedLedger, final BECPNode d, final Multimap<BECPNode, Integer> donatedCache, final Multimap<BECPNode, Integer> mainCache_d, final RecoveryExchangeId recoveryExchangeId) {
         if(REAP_PLUS&&NCP) {
         	this.peerBlockchainNode.gossipMessage( 
                     new GossipMessage(
@@ -1529,6 +1854,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setCrashedNodes(peer.getCrashedNodes())
                     		.setJoinedNodes(peer.getJoinedNodes())
                     		.setLocalLedger(updatedLedger)
+							.setRecoveryExchangeId(recoveryExchangeId)
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(REAP_PLUS&&EMP_PLUS) {
@@ -1545,6 +1871,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(d)
                     		.setDonatedCache(donatedCache)
                     		.setMainCache_d(mainCache_d)
+                    		.setRecoveryExchangeId(recoveryExchangeId)
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(REAP&&NCP) {
@@ -1613,7 +1940,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 	}
 	
 	private void performPush(final BECPNode peer, final BECPNode destination, final double peerValue, final double peerWeight,
-			final ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache, final Multimap<BECPNode, Integer> cache_s) {
+			final ArrayList<BECPNode> copyNeighborCache, final HashMap<Integer, BECPBlock> copyBlockCache, final Multimap<BECPNode, Integer> cache_s, final RecoveryExchangeId recoveryExchangeId) {
         if(REAP_PLUS&&NCP) {
         	this.peerBlockchainNode.gossipMessage( 
                     new GossipMessage(
@@ -1628,6 +1955,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setCrashedNodes(peer.getCrashedNodes())
                     		.setJoinedNodes(peer.getJoinedNodes())
                     		.setIsNewJoined(false)
+							.setRecoveryExchangeId(recoveryExchangeId)
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(REAP_PLUS&&EMP_PLUS) {
@@ -1647,6 +1975,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(null)
                     		.setV_d(Integer.MAX_VALUE)
                     		.setH(0)
+							.setRecoveryExchangeId(recoveryExchangeId)
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(REAP&&NCP) {
@@ -1863,6 +2192,16 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 		if(removedCachedBlocks.contains(blockSender.getHeight())) {
 			return;
 		}
+		/*
+		* A committed height is immutable.
+		* Once this node has committed a block at height h,
+		* no received candidate at h may replace or modify it.
+		*/
+		for (BECPBlock committedBlock : peer.getLocalLedger()) {
+			if (committedBlock.getHeight() == blockSender.getHeight()) {
+				return;
+			}
+		}
 		// Check if the peerBlockLocalCache contains a block with the same ID as the received block.
 		HashMap<Integer, BECPBlock> peerBlockLocalCache = peer.getBlockLocalCache();
 		if((peerBlockLocalCache.containsKey(blockSender.getHeight()))){ // Resolve duplicate blocks.
@@ -1907,7 +2246,17 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 	 * @param peer the node that contains the blockPeer.
 	 */
 	private static void resolveFork(HashMap<Integer, BECPBlock> peerBlockLocalCache, BECPBlock blockPeer, BECPNode peer) {
-	    HashSet<BECPBlock> children = blockPeer.getChildren();
+	    if (isBlockCommittedLocally(peer, blockPeer)) {
+			throw new IllegalStateException(
+					"Safety violation: attempted to remove committed block "
+					+ "at height "
+					+ blockPeer.getHeight()
+					+ " from node "
+					+ peer.getNodeID()
+					+ ".");
+		}
+
+		HashSet<BECPBlock> children = blockPeer.getChildren();
 	    int descendentNumber = 0;
 	    
 	    for (BECPBlock child : children) {
@@ -1951,6 +2300,107 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
     		
         return false;
     }
+
+	private static boolean isBlockCommittedLocally(BECPNode peer, BECPBlock block) {
+			if (block == null) {
+				return false;
+			}
+
+			for (BECPBlock committedBlock : peer.getLocalLedger()) {
+				if (committedBlock.getHeight() == block.getHeight() && committedBlock.getHash() == block.getHash() && committedBlock.getState() == BECPBlock.State.COMMIT) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+	private void mergeRecoveredLedger(BECPNode peer, LinkedHashSet<BECPBlock> recoveredLedger) {
+		if (recoveredLedger == null) {
+			return;
+		}
+
+		List<BECPBlock> recoveredBlocks = new ArrayList<>(recoveredLedger);
+		recoveredBlocks.sort(Comparator.comparingInt(BECPBlock::getHeight));
+
+		for (BECPBlock recoveredBlock : recoveredBlocks) {
+			if (recoveredBlock.getState() != BECPBlock.State.COMMIT) {
+				throw new IllegalStateException(
+						"Recovery ledger contains a non-committed block "
+						+ "at height "
+						+ recoveredBlock.getHeight()
+						+ ".");
+			}
+
+			BECPBlock localBlockAtHeight = null;
+			for (BECPBlock localBlock : peer.getLocalLedger()) {
+				if (localBlock.getHeight() == recoveredBlock.getHeight()) {
+					localBlockAtHeight = localBlock;
+					break;
+				}
+			}
+
+			if (localBlockAtHeight != null) {
+				/*
+				* The node already committed something at this height.
+				* It may never be replaced.
+				*/
+				if (localBlockAtHeight.getHash() != recoveredBlock.getHash()) {
+					throw new IllegalStateException(
+							"Safety violation: recovery attempted to replace "
+							+ "committed block at height "
+							+ recoveredBlock.getHeight()
+							+ " in node "
+							+ peer.getNodeID()
+							+ ".");
+				}
+
+				// Same committed block already present.
+				continue;
+			}
+
+			/*
+			* Genesis is the only committed block without a parent.
+			*/
+			if (recoveredBlock.getHeight() == 0) {
+				peer.addToLocalLedger(recoveredBlock);
+				continue;
+			}
+
+			/*
+			* A recovered committed child may be added only after
+			* its parent is already committed locally.
+			*/
+			if (!isParentCommittedLocally(peer, recoveredBlock)) {
+				throw new IllegalStateException(
+						"Safety violation: recovery attempted to add block "
+						+ recoveredBlock.getHeight()
+						+ " before its parent was committed in node "
+						+ peer.getNodeID()
+						+ ".");
+			}
+
+			peer.addToLocalLedger(recoveredBlock);
+		}
+
+		orderLedger(peer, peer.getLocalLedger());
+		BECPBlock highestCommittedBlock = null;
+		for (BECPBlock committedBlock : peer.getLocalLedger()) {
+			if (highestCommittedBlock == null || committedBlock.getHeight() > highestCommittedBlock.getHeight()) {
+				highestCommittedBlock = committedBlock;
+			}
+		}
+
+		if (highestCommittedBlock != null) {
+			peer.setLastConfirmedBlock(highestCommittedBlock);
+		}
+	}
+
+	private boolean isParentCommittedLocally(BECPNode peer, BECPBlock block) {
+    	BECPBlock parent = block.getParent();
+    	return isBlockCommittedLocally(peer, parent);
+	}
+
     /**
      * Orders the local ledger of a BECPNode based on the height of the blocks.
      *

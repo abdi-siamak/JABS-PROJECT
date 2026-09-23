@@ -3,6 +3,7 @@ package jabs.network.node.nodes.becp;
 import jabs.consensus.blockchain.LocalBlockTree;
 import jabs.consensus.algorithm.BECP;
 import jabs.ledgerdata.Gossip;
+import jabs.ledgerdata.Hash;
 import jabs.ledgerdata.Query;
 import jabs.ledgerdata.Vote;
 import jabs.ledgerdata.becp.*;
@@ -42,10 +43,16 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
     private Multimap<BECPNode, Integer> reserveCache; // keys:[nodeID, createdTime]-(EMP+ protocol)
     private Multimap<BECPNode, Integer> historyCache; // keys:[nodeID, createdTime]-(EMP+ protocol)
     private HashMap<Integer, BECPBlock> blockLocalCache; //blockID -> block (PTP & ECP)
+	private HashMap<Integer, MembershipSnapshot> membershipSnapshots; // fixed M_h for each unresolved height
+	private HashMap<Integer, Hash> persistentFinalVotes; // V_i(h): durable final vote per height
+    private HashSet<Integer> unavailableFinalVoteHeights; // heights whose durable vote state could not be restored
+	private HashMap<Integer, HashMap<Hash, HashSet<Integer>>> finalConfirmations;
     private boolean criticalPushFlag; //(REAP protocol)
     private boolean convergenceFlag; //(REAP protocol)
     private ArrayList<PushEntry> pushEntriesBuffer; //(REAP & REAP+ protocols)
     private HashMap<Key, RecoveryEntry> recoveryCache; //keys:[Sender's Id, cycleNumber]-(REAP & REAP+ protocols)
+	private HashMap<RecoveryExchangeId, RecoveryEntry> recoveryExchangeCache; // REAP+ exact exchange tracking
+	private long recoveryExchangeSequence = 0; // persistent sender-local sequence for unique REAP+ exchange IDs
     private Queue<ArrayList<Double>> reapQueue; //(REAP)-the estimations queue.
     private Queue<ArrayList<Double>> ecpQueue; //(ECP)-the estimations queue.
     private ArrayList<ForwardMessage> forwardMessages; 
@@ -73,6 +80,10 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
         this.value = value;
         this.weight = weight;
         this.blockLocalCache = new HashMap<>();
+		this.membershipSnapshots = new HashMap<>();
+		this.persistentFinalVotes = new HashMap<>();
+		this.unavailableFinalVoteHeights = new HashSet<>();
+		this.finalConfirmations = new HashMap<>();
         this.neighborsLocalCache = new ArrayList<>(); // is initialized while populating the network.
         this.localLedger = new LinkedHashSet<>();
         this.setLastConfirmedBlock(BECP_GENESIS_BLOCK);
@@ -92,6 +103,7 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
         	this.convergenceFlag=false;
         	this.pushEntriesBuffer = new ArrayList<>();
         	this.recoveryCache = new HashMap<>();
+			this.recoveryExchangeCache = new HashMap<>();
         	this.reapQueue=new ArrayBlockingQueue<>(BECP.QUEUE_SIZE);
         }
         if(BECP.ARP) {
@@ -147,7 +159,201 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
     public void setBlockLocalCache(HashMap<Integer, BECPBlock> blockLocalCache){this.blockLocalCache = blockLocalCache; }
 
     public HashMap<Integer, BECPBlock> getBlockLocalCache(){ return blockLocalCache; }
-    
+
+	public HashMap<Integer, MembershipSnapshot> getMembershipSnapshots() {
+    return membershipSnapshots;
+}
+
+	public MembershipSnapshot getMembershipSnapshot(int height) {
+		return membershipSnapshots.get(height);
+	}
+
+	public MembershipSnapshot getOrCreateMembershipSnapshot(int height) {
+		MembershipSnapshot existingSnapshot = membershipSnapshots.get(height);
+		if (existingSnapshot != null) {
+			return existingSnapshot;
+		}
+
+		HashSet<Integer> memberIds = new HashSet<>();
+		for (Object networkNode : this.getNetwork().getAllNodes()) {
+			memberIds.add(((Node) networkNode).getNodeID());
+		}
+
+		MembershipSnapshot newSnapshot = new MembershipSnapshot(height, memberIds);
+		addMembershipSnapshot(newSnapshot);
+
+		return newSnapshot;
+	}
+
+	public void addMembershipSnapshot(MembershipSnapshot snapshot) {
+		if (snapshot == null) {
+			throw new IllegalArgumentException("Membership snapshot cannot be null.");
+		}
+		int height = snapshot.getHeight();
+		MembershipSnapshot existingSnapshot = membershipSnapshots.get(height);
+
+		if (existingSnapshot != null) {
+			if (!existingSnapshot.getSnapshotId().equals(snapshot.getSnapshotId())) {
+				throw new IllegalStateException("Membership snapshot for height " + height + " cannot be replaced.");
+			}
+
+			// Same snapshot already stored: nothing to change.
+			return;
+		}
+
+		membershipSnapshots.put(height, snapshot);
+	}
+
+	public Hash getPersistentFinalVote(int height) {
+		return persistentFinalVotes.get(height);
+	}
+
+	public boolean hasPersistentFinalVote(int height) {
+		return persistentFinalVotes.containsKey(height);
+	}
+
+	public boolean isFinalVoteStateUnavailable(int height) {
+		return unavailableFinalVoteHeights.contains(height);
+	}
+
+	/**
+	 * Records V_i(h), the node's one and only final confirmation
+	 * for the given height.
+	 *
+	 * @return true if the vote was recorded for the first time;
+	 *         false if the node must not issue another confirmation.
+	 */
+	public boolean recordPersistentFinalVote(int height, BECPBlock block) {
+		if (height < 1) {
+			throw new IllegalArgumentException("Final confirmation height must be greater than 0.");
+		}
+
+		if (block == null) {
+			throw new IllegalArgumentException("Final confirmation block cannot be null.");
+		}
+
+		if (block.getHeight() != height) {
+			throw new IllegalArgumentException("Final confirmation block height does not match vote height.");
+		}
+
+		// If durable state for this height could not be restored, the node is forbidden from issuing another final confirmation.
+		if (unavailableFinalVoteHeights.contains(height)) {
+			return false;
+		}
+
+		Hash existingVote = persistentFinalVotes.get(height);
+		if (existingVote != null) {
+			// The node already issued its final confirmation for this height.
+			if (existingVote == block.getHash()) {
+				return false;
+			}
+
+			// Attempting to vote for a different block at the same height is a safety violation.
+			throw new IllegalStateException(
+					"Node "
+					+ getNodeID()
+					+ " attempted to issue two different final confirmations"
+					+ " at height "
+					+ height
+					+ ".");
+		}
+
+		persistentFinalVotes.put(height, block.getHash());
+
+		return true;
+	}
+
+	/**
+	 * Models a recovery in which V_i(h) cannot be restored.
+	 * The node is then permanently prevented from issuing another final confirmation at that height.
+	 */
+	public void markFinalVoteStateUnavailable(int height) {
+		persistentFinalVotes.remove(height);
+		unavailableFinalVoteHeights.add(height);
+	}
+
+	/**
+	 * Records one valid final confirmation.
+	 *
+	 * Confirmations are grouped by:
+	 * height -> block hash -> distinct confirmer node IDs.
+	 *
+	 * @return true if this confirmer was added for the first time;
+	 *         false if the same confirmer was already counted.
+	 */
+    public boolean recordFinalConfirmation(int height, BECPBlock block, int confirmerNodeId) {
+		if (height < 1) {
+			throw new IllegalArgumentException("Final confirmation height must be greater than 0.");
+		}
+
+		if (block == null) {
+			throw new IllegalArgumentException("Final confirmation block cannot be null.");
+		}
+
+		if (block.getHeight() != height) {
+			throw new IllegalArgumentException("Final confirmation block height does not match confirmation height.");
+		}
+
+		Hash blockHash = block.getHash();
+		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.computeIfAbsent(height,key -> new HashMap<>());
+		/*
+		* A member may contribute at most one final confirmation at a given height.
+		* If this confirmer already appears under another block
+		* hash at the same height, that is an equivocation and
+		* therefore a safety violation.
+		*/
+		for (Hash existingBlockHash : confirmationsAtHeight.keySet()) {
+			HashSet<Integer> existingConfirmers = confirmationsAtHeight.get(existingBlockHash);
+			if (existingConfirmers.contains(confirmerNodeId) && existingBlockHash != blockHash) {
+				throw new IllegalStateException(
+						"Safety violation: node "
+						+ confirmerNodeId
+						+ " issued final confirmations for two "
+						+ "different blocks at height "
+						+ height
+						+ ".");
+			}
+		}
+		HashSet<Integer> confirmingNodes = confirmationsAtHeight.computeIfAbsent(blockHash, key -> new HashSet<>());
+
+		return confirmingNodes.add(confirmerNodeId);
+	}
+
+	public int getFinalConfirmationCount(int height, BECPBlock block) {
+		if (block == null) {
+			return 0;
+		}
+
+		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.get(height);
+
+		if (confirmationsAtHeight == null) {
+			return 0;
+		}
+
+		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
+
+		if (confirmingNodes == null) {
+			return 0;
+		}
+
+		return confirmingNodes.size();
+	}
+
+	public boolean hasFinalConfirmationFrom(int height, BECPBlock block, int confirmerNodeId) {
+		if (block == null) {
+			return false;
+		}
+
+		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.get(height);
+		if (confirmationsAtHeight == null) {
+			return false;
+		}
+
+		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
+
+		return confirmingNodes != null && confirmingNodes.contains(confirmerNodeId);
+	}
+
     /**
      * Retrieves an estimated value from the SSEP, REAP, REAP+ (the system size in the Protocol).
      * 
@@ -161,6 +367,48 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
         return criticalPushFlag;
     }
     public HashMap<Key, RecoveryEntry> getRecoveryCache(){ return recoveryCache; }
+	public HashMap<RecoveryExchangeId, RecoveryEntry> getRecoveryExchangeCache() {
+    	return recoveryExchangeCache;
+	}
+	public RecoveryExchangeId createRecoveryExchangeId() {
+		RecoveryExchangeId exchangeId = new RecoveryExchangeId(getNodeID(), getCycleNumber(), recoveryExchangeSequence);
+		recoveryExchangeSequence++;
+
+		return exchangeId;
+	}
+	public long getRecoveryExchangeSequence() {
+		return recoveryExchangeSequence;
+	}
+	/**
+	 * Terminates recovery exchanges that were still PENDING when this
+	 * node crashed.
+	 * The node's volatile aggregation state is discarded during restart
+	 * and reconstructed from another node. Therefore, these old exchanges
+	 * must never be allowed to time out later and modify the reconstructed
+	 * mass.
+	 * Receiver-side entries are retained as RESTORED tombstones so that
+	 * delayed duplicate Push/RePush messages cannot reactivate them.
+	 *
+	 * Sender-side entries are also terminalized before the restart code
+	 * removes the old push buffer.
+	 */
+	public void terminalizePendingRecoveryExchangesForRestart() {
+		if (pushEntriesBuffer != null) {
+			for (PushEntry pushEntry : pushEntriesBuffer) {
+				if (!pushEntry.isRecoveryExchangeTerminal()) {
+					pushEntry.transitionRecoveryExchangeState(RecoveryExchangeState.RESTORED);
+				}
+			}
+		}
+
+		if (recoveryExchangeCache != null) {
+			for (RecoveryEntry recoveryEntry : recoveryExchangeCache.values()) {
+				if (!recoveryEntry.isRecoveryExchangeTerminal()) {
+					recoveryEntry.transitionRecoveryExchangeState(RecoveryExchangeState.RESTORED);
+				}
+			}
+		}
+	}
     public Queue<ArrayList<Double>> getReapQueue(){return reapQueue; }
     public void setConvergenceFlag(boolean flag){this.convergenceFlag=flag; }
     public void setCriticalPushFlag(boolean flag){this.criticalPushFlag=flag; }

@@ -47,6 +47,7 @@ public class BECPBlock extends SingleParentBlock<BECPBlock> implements Cloneable
     public enum State {
         PROPAGATION,
         AGREEMENT,
+        CONFIRMATION,
         COMMIT;
        
     }
