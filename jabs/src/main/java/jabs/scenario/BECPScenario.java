@@ -150,10 +150,61 @@ public class BECPScenario extends AbstractScenario{
         }
     }
 
+    /**
+     * Experiment hook allowing a scenario to provide a specialised
+     * BECP WAN network. Normal scenarios keep the standard network.
+     */
+    protected BECPWANNetwork createBECPNetwork() {
+        return new BECPWANNetwork(this.randomnessEngine);
+    }
+
     @Override
     public void createNetwork() {
-        network = new BECPWANNetwork(this.randomnessEngine);
-        network.populateNetwork(simulator, numOfNodes, new BECPConsensusConfig(), NEIGHBOR_CACHE_SIZE, VALUE_I, WEIGHT_I, VALUE, WEIGHT, V_DATA_AGGREGATION, W_DATA_AGGREGATION, V_DATA_CONVERGENCE, V_DATA_AGREEMENT, WEIGHT_VALUE);
+        network = createBECPNetwork();
+        network.populateNetwork(
+                simulator,
+                numOfNodes,
+                new BECPConsensusConfig(),
+                NEIGHBOR_CACHE_SIZE,
+                VALUE_I,
+                WEIGHT_I,
+                VALUE,
+                WEIGHT,
+                V_DATA_AGGREGATION,
+                W_DATA_AGGREGATION,
+                V_DATA_CONVERGENCE,
+                V_DATA_AGREEMENT,
+                WEIGHT_VALUE);
+    }
+
+    /**
+     * Experiment hook controlling whether a node creates an initial block.
+     *
+     * The normal BECP scenario keeps the existing behaviour.
+     * Specialised experiment scenarios may override this method.
+     */
+    protected boolean shouldGenerateInitialBlock(final BECPNode node) {
+        return true;
+    }
+
+    /**
+     * Experiment hook controlling continuous block generation.
+     *
+     * The normal BECP scenario keeps the existing behaviour.
+     * Specialised experiment scenarios may disable it.
+     */
+    protected boolean shouldGenerateContinuousBlock(final BECPNode node) {
+        return true;
+    }
+
+    /**
+     * Experiment hook controlling whether a node executes its normal cycle.
+     *
+     * Normal BECP behaviour is unchanged. Experiment scenarios may
+     * temporarily pause one node without modifying protocol state.
+     */
+    protected boolean shouldProcessNodeCycle(final BECPNode node) {
+        return true;
     }
 
     @Override
@@ -257,22 +308,53 @@ public class BECPScenario extends AbstractScenario{
             BECPBlock newBlock = null;
             HashMap<Integer, BECPBlock> copyBlockCache = new HashMap<>();
             //***** ECP(Epidemic Consensus Protocol) & PTP(Phase Transition Protocol)*****//
-            if (BECP.PTP||BECP.ECP) {
-                // AGGREGATION STATE (ECP)  PROPAGATION STATE (PTP)
-            	if(SINGLE_PROPOSER) {
-                	if(node.nodeID==0) {
-                		newBlock = BlockFactory.sampleBECPBlock(simulator, network.getRandom(), node, node.getLeader(), BECP_GENESIS_BLOCK, V_PROPAGATION, W_PROPAGATION, V_AGREEMENT, W_AGREEMENT, V_DATA_AGGREGATION, W_DATA_AGGREGATION, V_DATA_CONVERGENCE, V_DATA_AGREEMENT, WEIGHT_VALUE); // generate a new block.
-                		BECP_GENESIS_BLOCK.addTochildren(newBlock);
-                		//System.out.println("block ID: " + newBlock.getHeight() + ", creator: " + newBlock.getCreator().getNodeID() + ", hash: " + newBlock.getHash().hashCode() + " is generated in node " + node.getNodeID()+" at "+simulator.getSimulationTime());
+            if (BECP.PTP || BECP.ECP) {
+                if (shouldGenerateInitialBlock(node)) {
+                    if (SINGLE_PROPOSER) {
+                        if (node.nodeID == 0) {
+                            newBlock = BlockFactory.sampleBECPBlock(
+                                            simulator,
+                                            network.getRandom(),
+                                            node,
+                                            node.getLeader(),
+                                            BECP_GENESIS_BLOCK,
+                                            V_PROPAGATION,
+                                            W_PROPAGATION,
+                                            V_AGREEMENT,
+                                            W_AGREEMENT,
+                                            V_DATA_AGGREGATION,
+                                            W_DATA_AGGREGATION,
+                                            V_DATA_CONVERGENCE,
+                                            V_DATA_AGREEMENT,
+                                            WEIGHT_VALUE);
+                            BECP_GENESIS_BLOCK.addTochildren(newBlock);
+                            node.setCurrentPreferredBlock(newBlock);
+                        }
+                    } else {
+                        newBlock = BlockFactory.sampleBECPBlock(
+                                        simulator,
+                                        network.getRandom(),
+                                        node,
+                                        node.getLeader(),
+                                        BECP_GENESIS_BLOCK,
+                                        V_PROPAGATION,
+                                        W_PROPAGATION,
+                                        V_AGREEMENT,
+                                        W_AGREEMENT,
+                                        V_DATA_AGGREGATION,
+                                        W_DATA_AGGREGATION,
+                                        V_DATA_CONVERGENCE,
+                                        V_DATA_AGREEMENT,
+                                        WEIGHT_VALUE);
+                        BECP_GENESIS_BLOCK.addTochildren(newBlock);
                         node.setCurrentPreferredBlock(newBlock);
-                	}
-            	}else {
-            		newBlock = BlockFactory.sampleBECPBlock(simulator, network.getRandom(), node, node.getLeader(), BECP_GENESIS_BLOCK, V_PROPAGATION, W_PROPAGATION, V_AGREEMENT, W_AGREEMENT, V_DATA_AGGREGATION, W_DATA_AGGREGATION, V_DATA_CONVERGENCE, V_DATA_AGREEMENT, WEIGHT_VALUE); // generate a new block.
-            		BECP_GENESIS_BLOCK.addTochildren(newBlock);
-            		//System.out.println("block ID: " + newBECPBlock.getHeight() + ", creator: " + newBECPBlock.getCreator().getNodeID() + ", hash: " + newBECPBlock.getHash().hashCode() + " is generated in node " + node.getNodeID()+" at "+simulator.getSimulationTime());
-                    node.setCurrentPreferredBlock(newBlock);
-            	}
-            	node.addToLocalLedger(BECP_GENESIS_BLOCK);
+                    }
+                }
+                /*
+                * Genesis initialization is required even when an experiment
+                * suppresses normal proposal generation.
+                */
+                node.addToLocalLedger(BECP_GENESIS_BLOCK);
                 copyBlockCache = initializeBlockLocalCache(node, newBlock);
             }
             //##### ECP(Epidemic Consensus Protocol) & PTP(Phase Transition Protocol)#####//
@@ -452,6 +534,10 @@ public class BECPScenario extends AbstractScenario{
         	if (event instanceof NodeCycleEvent) { 
         		simulator.executeNextEvent();
         		node = (BECPNode) ((NodeCycleEvent) event).getNode();
+                if (!shouldProcessNodeCycle(node)) {
+                    simulator.putEvent(new NodeCycleEvent<BECPNode>(node), CYCLE_TIME);
+                    continue;
+                }
             	//System.out.println("a simulationEvent received from node "+ node.getNodeID()+" (queue size: "+simulator.getNumOfEvents()+") at "+simulator.getSimulationTime());
         		//*****Start a new Cycle*****//
     			//System.out.println("New Cycle Started in node "+node.getNodeID());
@@ -521,7 +607,7 @@ public class BECPScenario extends AbstractScenario{
             			continue;
             		}
             		*/
-        			if(CONTINUOUS_BLOCK_GENERATION&&(node.getCycleNumber()%BLOCK_GENERATION_INTERVAL==0)&&(node.getCurrentPreferredBlock().getHeight()<MAX_BLOCKS_IN_LEDGERS)) {
+        			if(CONTINUOUS_BLOCK_GENERATION&&shouldGenerateContinuousBlock(node)&&(node.getCycleNumber()%BLOCK_GENERATION_INTERVAL==0)&&(node.getCurrentPreferredBlock().getHeight()<MAX_BLOCKS_IN_LEDGERS)) {
                         //***** Generating new blocks*****//
         				//System.out.println(node.getCycleNumber());
         				if(SINGLE_PROPOSER) {
@@ -965,7 +1051,7 @@ public class BECPScenario extends AbstractScenario{
      * @param node               The BECPNode for which a new block is generated.
      * @param lastPreferredBlock The last Preferred BECPBlock in the network.
      */
-    private void generateNewBlock(final BECPNode node) {
+    protected void generateNewBlock(final BECPNode node) {
     	HashMap<Integer, BECPBlock> peerBlockLocalCache = node.getBlockLocalCache();
     	if(!peerBlockLocalCache.containsKey(node.getCurrentPreferredBlock().getHeight()+1)) {
     		BECPBlock newBlock = BlockFactory.sampleBECPBlock(simulator, randomnessEngine, node, node.getLeader(), node.getCurrentPreferredBlock(), V_PROPAGATION, W_PROPAGATION, V_AGREEMENT, W_AGREEMENT, V_DATA_AGGREGATION, W_DATA_AGGREGATION, V_DATA_CONVERGENCE, V_DATA_AGREEMENT, WEIGHT_VALUE); // generate a new block

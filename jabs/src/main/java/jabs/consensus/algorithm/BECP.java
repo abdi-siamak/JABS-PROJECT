@@ -57,9 +57,9 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 	 * 
 	 */
 	//----------Estimation Protocols---------------
-    public static final boolean SSEP = true; // System Size Protocol (estimation protocol)
+    public static final boolean SSEP = Boolean.parseBoolean(System.getProperty("jabs.becp.ssep", "true")); // System Size Protocol (estimation protocol)
     public static final boolean REAP = false; // Robust Epidemic Aggregation Protocol (estimation and fail detection protocol) [Note: Still not functional for consensus]
-    public static final boolean REAP_PLUS = false; // Robust Epidemic Aggregation Protocol-Plus
+    public static final boolean REAP_PLUS = Boolean.parseBoolean(System.getProperty("jabs.becp.reapPlus", "false")); // Robust Epidemic Aggregation Protocol-Plus
     public static final boolean ARP = false; // Adaptive Restart Protocol (an adaptive restart mechanism for continuous epidemic systems)
     //----------Membership Protocols---------------
     public static final boolean NCP = true; // Node Cache Protocol

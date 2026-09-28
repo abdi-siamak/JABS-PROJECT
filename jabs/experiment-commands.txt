@@ -1,0 +1,3 @@
+./scripts/experiments/run-conflicting-proposals.sh 1
+python3 scripts/experiments/summarize-conflicting-proposals.py 1000
+
