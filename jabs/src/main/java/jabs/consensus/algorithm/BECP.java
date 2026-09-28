@@ -2201,6 +2201,10 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 				return;
 			}
 		}
+		Hash persistentFinalVote = peer.getPersistentFinalVote(blockSender.getHeight());
+		if (persistentFinalVote != null && persistentFinalVote != blockSender.getHash()) {
+			return;
+		}
 		// Check if the peerBlockLocalCache contains a block with the same ID as the received block.
 		HashMap<Integer, BECPBlock> peerBlockLocalCache = peer.getBlockLocalCache();
 		if((peerBlockLocalCache.containsKey(blockSender.getHeight()))){ // Resolve duplicate blocks.
