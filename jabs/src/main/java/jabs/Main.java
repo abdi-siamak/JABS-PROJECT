@@ -20,7 +20,7 @@ public class Main {
 	public static HashMap<Integer, ArrayList<Double>> MPEs = new HashMap<>();
 	public static HashMap<Integer, ArrayList<ArrayList<Double>>> VARs = new HashMap<>();
 	public static ArrayList<Double> averageConsensusDurationTimes = new ArrayList<>();
-	public static ArrayList<Integer> averageNumberOfSentMessages = new ArrayList<>();
+    public static ArrayList<Long> averageNumberOfSentMessages = new ArrayList<>();
 	public static ArrayList<Long> averageSizeOfSentMessages = new ArrayList<>();
 	public static ArrayList<Integer> averageBlockchainHeights = new ArrayList<>();
 	public static ArrayList<Double> forkSolutionCalls = new ArrayList<>();
@@ -196,7 +196,7 @@ public class Main {
 	private static void calculateAverage() { // calculates an average of the number of runs.
 		int averageHeight = (int) Math.round(averageBlockchainHeights.stream().mapToInt(Integer::intValue).average().orElse(0.0));
 		double averageConsensusTime = averageConsensusDurationTimes.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-		int averageSentMessages =  (int) Math.round(averageNumberOfSentMessages.stream().mapToInt(Integer::intValue).average().orElse(0.0));
+		long averageSentMessages = Math.round(averageNumberOfSentMessages.stream().mapToLong(Long::longValue).average().orElse(0.0));
 		long averageSizeSentMessages = Math.round(averageSizeOfSentMessages.stream().mapToLong(Long::longValue).average().orElse(0.0));
 		double averageForkSolutionCalls = forkSolutionCalls.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
 		double averageForkHeights = forkHeights.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);

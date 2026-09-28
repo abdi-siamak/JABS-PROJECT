@@ -1,5 +1,6 @@
 package jabs.network.node.nodes.becp;
 
+import java.util.BitSet;
 import jabs.consensus.blockchain.LocalBlockTree;
 import jabs.consensus.algorithm.BECP;
 import jabs.ledgerdata.Gossip;
@@ -22,6 +23,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Queue;
 import java.util.concurrent.ArrayBlockingQueue;
+
 
 public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 	private final LinkedHashSet<BECPBlock> localLedger; // the local ledger of the node, or the blockchain.
@@ -319,6 +321,24 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 		return confirmingNodes.add(confirmerNodeId);
 	}
 
+	/**
+	 * Clears confirmation evidence learned from other nodes while preserving
+	 * this node's own durable final votes as locally reconstructible evidence.
+	 */
+	public void clearVolatileFinalConfirmations() {
+		finalConfirmations.clear();
+
+		for (java.util.Map.Entry<Integer, Hash> persistentVote : persistentFinalVotes.entrySet()) {
+			HashSet<Integer> ownConfirmation = new HashSet<>();
+			ownConfirmation.add(getNodeID());
+
+			HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = new HashMap<>();
+			confirmationsAtHeight.put(persistentVote.getValue(), ownConfirmation);
+
+			finalConfirmations.put(persistentVote.getKey(), confirmationsAtHeight);
+		}
+	}
+
 	public int getFinalConfirmationCount(int height, BECPBlock block) {
 		if (block == null) {
 			return 0;
@@ -339,6 +359,79 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 		return confirmingNodes.size();
 	}
 
+	public BitSet getFinalConfirmationBitmap(int height, BECPBlock block) {
+		BitSet bitmap = new BitSet();
+		if (block == null) {
+			return bitmap;
+		}
+
+		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.get(height);
+		if (confirmationsAtHeight == null) {
+			return bitmap;
+		}
+
+		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
+		if (confirmingNodes != null) {
+			for (Integer nodeId : confirmingNodes) {
+				bitmap.set(nodeId);
+			}
+		}
+
+		return bitmap;
+	}
+
+	public ArrayList<BECPConfirmationBitmap> getFinalConfirmationBitmaps() {
+		ArrayList<BECPConfirmationBitmap> bitmaps = new ArrayList<>();
+		for (BECPBlock block : blockLocalCache.values()) {
+			BitSet bitmap = getFinalConfirmationBitmap(block.getHeight(), block);
+			if (bitmap.isEmpty()) {
+				continue;
+			}
+
+			MembershipSnapshot snapshot = getMembershipSnapshot(block.getHeight());
+			if (snapshot == null) {
+				continue;
+			}
+
+			bitmaps.add(new BECPConfirmationBitmap(
+					block.getHeight(),
+					block.getHash(),
+					snapshot.getSnapshotId(),
+					bitmap));
+		}
+
+		return bitmaps;
+	}
+
+	public void mergeFinalConfirmationBitmap(BECPBlock block, BECPConfirmationBitmap confirmationBitmap) {
+		if (block == null || confirmationBitmap == null) {
+			return;
+		}
+
+		if (block.getHeight() != confirmationBitmap.getHeight()) {
+			return;
+		}
+
+		if (block.getHash() != confirmationBitmap.getBlockHash()) {
+			return;
+		}
+
+		MembershipSnapshot snapshot = getOrCreateMembershipSnapshot(block.getHeight());
+		if (!snapshot.getSnapshotId().equals(confirmationBitmap.getSnapshotId())) {
+			return;
+		}
+
+		BitSet bitmap = confirmationBitmap.getConfirmations();
+		for (int nodeId = bitmap.nextSetBit(0);
+			nodeId >= 0;
+			nodeId = bitmap.nextSetBit(nodeId + 1)) {
+
+			if (snapshot.containsMember(nodeId)) {
+				recordFinalConfirmation(block.getHeight(), block, nodeId);
+			}
+		}
+	}
+
 	public boolean hasFinalConfirmationFrom(int height, BECPBlock block, int confirmerNodeId) {
 		if (block == null) {
 			return false;
@@ -350,7 +443,7 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 		}
 
 		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
-
+		
 		return confirmingNodes != null && confirmingNodes.contains(confirmerNodeId);
 	}
 

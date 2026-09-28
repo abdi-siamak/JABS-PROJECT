@@ -165,6 +165,8 @@ public class CrashRecoveryPersistentVoteScenario extends BECPScenario {
     }
 
     private void crashVictim() {
+        victim.terminalizePendingRecoveryExchangesForRestart();
+        victim.clearVolatileFinalConfirmations();
         victim.crash();
         victim.isCrashed = true;
         crashPerformed = true;

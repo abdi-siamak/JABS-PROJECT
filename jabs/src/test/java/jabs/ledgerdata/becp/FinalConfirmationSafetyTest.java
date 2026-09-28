@@ -9,6 +9,9 @@ import static org.junit.Assert.assertSame;
 
 import org.junit.Test;
 
+import java.util.BitSet;
+import java.util.Set;
+
 import jabs.network.networks.becp.BECPLocalLANNetwork;
 import jabs.network.node.nodes.becp.BECPNode;
 import jabs.simulator.Simulator;
@@ -271,4 +274,91 @@ public class FinalConfirmationSafetyTest {
                 beforeCrash.getSequenceNumber() + 1,
                 afterRestore.getSequenceNumber());
         }
+    @Test
+    public void volatileConfirmationEvidenceIsClearedButDurableOwnVoteRemains() {
+
+        BECPNode node = createNode(3);
+        BECPBlock block = createBlock(node, 1, 1);
+
+        assertTrue(node.recordPersistentFinalVote(1, block));
+        assertTrue(node.recordFinalConfirmation(1, block, node.getNodeID()));
+        assertTrue(node.recordFinalConfirmation(1, block, 7));
+        assertEquals(2, node.getFinalConfirmationCount(1, block));
+
+        node.clearVolatileFinalConfirmations();
+
+        assertSame(block.getHash(), node.getPersistentFinalVote(1));
+        assertTrue(node.hasFinalConfirmationFrom(1, block, node.getNodeID()));
+        assertFalse(node.hasFinalConfirmationFrom(1, block, 7));
+        assertEquals(1, node.getFinalConfirmationCount(1, block));
+    }
+
+    @Test
+    public void confirmationBitmapMergesMatchingSnapshotAndCandidate() {
+
+        BECPNode receiver = createNode(0);
+        BECPNode creator = createNode(1);
+        BECPBlock block = createBlock(creator, 1, 1);
+
+        MembershipSnapshot snapshot = new MembershipSnapshot(1, Set.of(0, 1, 2));
+        receiver.addMembershipSnapshot(snapshot);
+
+        BitSet confirmations = new BitSet();
+        confirmations.set(1);
+        confirmations.set(2);
+
+        BECPConfirmationBitmap bitmap = new BECPConfirmationBitmap(
+                1, block.getHash(), snapshot.getSnapshotId(), confirmations);
+
+        receiver.mergeFinalConfirmationBitmap(block, bitmap);
+
+        assertEquals(2, receiver.getFinalConfirmationCount(1, block));
+        assertTrue(receiver.hasFinalConfirmationFrom(1, block, 1));
+        assertTrue(receiver.hasFinalConfirmationFrom(1, block, 2));
+    }
+
+    @Test
+    public void confirmationBitmapWithWrongSnapshotIsIgnored() {
+
+        BECPNode receiver = createNode(0);
+        BECPNode creator = createNode(1);
+        BECPBlock block = createBlock(creator, 1, 1);
+
+        MembershipSnapshot localSnapshot = new MembershipSnapshot(1, Set.of(0, 1, 2));
+        MembershipSnapshot differentSnapshot = new MembershipSnapshot(1, Set.of(0, 1, 2, 3));
+        receiver.addMembershipSnapshot(localSnapshot);
+
+        BitSet confirmations = new BitSet();
+        confirmations.set(1);
+
+        BECPConfirmationBitmap bitmap = new BECPConfirmationBitmap(
+                1, block.getHash(), differentSnapshot.getSnapshotId(), confirmations);
+
+        receiver.mergeFinalConfirmationBitmap(block, bitmap);
+
+        assertEquals(0, receiver.getFinalConfirmationCount(1, block));
+    }
+
+    @Test
+    public void confirmationBitmapForDifferentCandidateIsIgnored() {
+
+        BECPNode receiver = createNode(0);
+        BECPNode creator = createNode(1);
+        BECPBlock blockA = createBlock(creator, 1, 1);
+        BECPBlock blockB = createBlock(creator, 1, 2);
+
+        MembershipSnapshot snapshot = new MembershipSnapshot(1, Set.of(0, 1, 2));
+        receiver.addMembershipSnapshot(snapshot);
+
+        BitSet confirmations = new BitSet();
+        confirmations.set(1);
+
+        BECPConfirmationBitmap bitmap = new BECPConfirmationBitmap(
+                1, blockB.getHash(), snapshot.getSnapshotId(), confirmations);
+
+        receiver.mergeFinalConfirmationBitmap(blockA, bitmap);
+
+        assertEquals(0, receiver.getFinalConfirmationCount(1, blockA));
+    }
+
 }

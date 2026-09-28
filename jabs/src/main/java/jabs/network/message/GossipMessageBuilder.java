@@ -1,15 +1,16 @@
 package jabs.network.message;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 
 import com.google.common.collect.Multimap;
-
 import jabs.ledgerdata.Gossip;
 import jabs.ledgerdata.becp.A;
 import jabs.ledgerdata.becp.BECPBlock;
+import jabs.ledgerdata.becp.BECPConfirmationBitmap;
 import jabs.ledgerdata.becp.BECPPull;
 import jabs.ledgerdata.becp.BECPPush;
 import jabs.ledgerdata.becp.C;
@@ -42,6 +43,8 @@ public class GossipMessageBuilder {
     private Integer v_d; // current main overlap (EMP+)
     private Integer h; // hop count (EMP+)
     private BECPNode d; // current best destination node (EMP+)
+	private ArrayList<BECPConfirmationBitmap> finalConfirmationBitmaps;
+
 	public GossipMessageBuilder setValue(double value) {
 		this.value = value;
 		return this;
@@ -110,13 +113,17 @@ public class GossipMessageBuilder {
 		this.recoveryExchangeId = recoveryExchangeId;
 		return this;
 	}
-    public Gossip buildPullGossip(Node sender, int size) {
-    	return new BECPPull<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, l, P, A, C, crashedNodes, joinedNodes, localLedger, mainCache_d, donatedCache, recoveryExchangeId);
-    }
+	public Gossip buildPullGossip(Node sender, int size) {
+		BECPPull<BECPBlock> pull = new BECPPull<>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, l, P, A, C, crashedNodes, joinedNodes, localLedger, mainCache_d, donatedCache, recoveryExchangeId);
+		pull.setFinalConfirmationBitmaps(finalConfirmationBitmaps);
+		return pull;
+	}
     
-    public Gossip buildPushGossip(Node sender, int size) {
-    	return new BECPPush<BECPBlock>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, isReceivedPull, recoveryRePush, l, P, A, C, crashedNodes, joinedNodes, isNewJoined, mainCache_S, v_d, h, d, recoveryExchangeId);
-    }
+	public Gossip buildPushGossip(Node sender, int size) {
+		BECPPush<BECPBlock> push = new BECPPush<>(sender, cycleNumber, size, value, weight, neighborsLocalCache, blockLocalCache, criticalPushFlag, isReceivedPull, recoveryRePush, l, P, A, C, crashedNodes, joinedNodes, isNewJoined, mainCache_S, v_d, h, d, recoveryExchangeId);
+		push.setFinalConfirmationBitmaps(finalConfirmationBitmaps);
+		return push;
+	}
 
 	public GossipMessageBuilder setV_d(Integer v_d) {
 		this.v_d = v_d;
@@ -145,6 +152,10 @@ public class GossipMessageBuilder {
 	
 	public GossipMessageBuilder setDonatedCache(Multimap<BECPNode, Integer> donatedCache) {
 		this.donatedCache = donatedCache;
+		return this;
+	}
+	public GossipMessageBuilder setFinalConfirmationBitmaps(ArrayList<BECPConfirmationBitmap> finalConfirmationBitmaps) {
+		this.finalConfirmationBitmaps = finalConfirmationBitmaps;
 		return this;
 	}
 }

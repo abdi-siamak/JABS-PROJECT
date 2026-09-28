@@ -732,6 +732,7 @@ public class BECPScenario extends AbstractScenario{
     private void join(BECPNode node) {
     	//System.out.println("node "+node.nodeID+" was rejoined at cycle "+node.getCycleNumber()+", and simulation time "+node.getSimulator().getSimulationTime());
 		node.terminalizePendingRecoveryExchangesForRestart();
+		node.clearVolatileFinalConfirmations();
         node.restore();
 		node.getRecoveryCache().clear();
 		node.getPushEntriesBuffer().clear();

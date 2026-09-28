@@ -14,7 +14,7 @@ import java.io.Writer;
 import java.nio.file.Path;
 
 public class BECPCSVLogger extends AbstractCSVLogger {
-    public static int numMessage;
+    public static long numMessage;
     public static long messageSize;
     
     /**

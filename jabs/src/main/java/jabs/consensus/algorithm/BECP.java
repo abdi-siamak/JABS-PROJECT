@@ -449,7 +449,8 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
 												.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
-                                        		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
+                                        		.setFinalConfirmationBitmaps(senderPush.getFinalConfirmationBitmaps())
+												.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         	} else if (senderPush.getH() == H_MAX) {
                         		forward = true;
@@ -477,6 +478,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
                                         		.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
+												.setFinalConfirmationBitmaps(senderPush.getFinalConfirmationBitmaps())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         	}
@@ -604,6 +606,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
 												.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
+												.setFinalConfirmationBitmaps(senderPush.getFinalConfirmationBitmaps())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         		//*System.out.println("forwarded a message from "+sender.getNodeID()+" to "+ destination.getNodeID()+" by node "+peer.nodeID+" at "+ peer.getCycleNumber()); 
@@ -633,6 +636,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                                         		.setV_d(senderPush.getV_d())
                                         		.setH(senderPush.getH())
 												.setRecoveryExchangeId(senderPush.getRecoveryExchangeId())
+												.setFinalConfirmationBitmaps(senderPush.getFinalConfirmationBitmaps())
                                         		.buildPushGossip(sender, getSizeOfBlocks(senderPush.getBlockLocalCache()))
                                         ), destination);
                         		//*System.out.println("Lastly, forwarded a message from "+sender.getNodeID()+" to "+ destination.getNodeID()+" by node "+peer.nodeID+" at "+ peer.getCycleNumber()); 
@@ -789,6 +793,12 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                             	}
                             	resolveDuplication(blockSender, peer);
                             }
+							for (BECPConfirmationBitmap confirmationBitmap : senderPush.getFinalConfirmationBitmaps()) {
+								BECPBlock localBlock = peer.getBlockLocalCache().get(confirmationBitmap.getHeight());
+								if (localBlock != null && localBlock.getHash() == confirmationBitmap.getBlockHash()) {
+									peer.mergeFinalConfirmationBitmap(localBlock, confirmationBitmap);
+								}
+							}
                         }
                         //##### PTP (Phase Transition Protocol)#####//
                         //***** ECP (Epidemic Consensus Protocol)*****//
@@ -860,26 +870,8 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 						break;
 					}
 
-					boolean newConfirmation = peer.recordFinalConfirmation(confirmationHeight, confirmationBlock, confirmerNodeId);
-
-					/*
-					* Flood a newly learned valid confirmation through the
-					* existing BECP/NCP neighbor graph.
-					*
-					* Important: we forward the SAME finalConfirmation object.
-					* We do not construct a new BECPFinalConfirmation with the
-					* relay as sender, so the original confirmer identity is
-					* preserved.
-					*/
-					if (newConfirmation) {
-						GossipMessage forwardedConfirmation = new GossipMessage(finalConfirmation);
-						for (BECPNode neighbor :peer.getNeighborsLocalCache()) {
-							if (neighbor.getNodeID() != peer.getNodeID()) {
-								peer.gossipMessage(forwardedConfirmation, neighbor);
-							}
-						}
-					}
-
+					peer.recordFinalConfirmation(confirmationHeight, confirmationBlock, confirmerNodeId);
+				
 					break;
 				
                 case PULL:
@@ -1116,6 +1108,12 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 									}
 
 									resolveDuplication(blockSender, peer);
+								}
+							}
+							for (BECPConfirmationBitmap confirmationBitmap : senderPull.getFinalConfirmationBitmaps()) {
+								BECPBlock localBlock = peer.getBlockLocalCache().get(confirmationBitmap.getHeight());
+								if (localBlock != null && localBlock.getHash() == confirmationBitmap.getBlockHash()) {
+									peer.mergeFinalConfirmationBitmap(localBlock, confirmationBitmap);
 								}
 							}
                         }
@@ -1695,20 +1693,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
 										+ becpBlock.getHeight()
 										+ ".");
 							}
-
 							peer.recordFinalConfirmation(becpBlock.getHeight(), becpBlock, peer.getNodeID());
-							BECPFinalConfirmation finalConfirmation = new BECPFinalConfirmation(
-									peer,
-									becpBlock.getHeight(),
-									becpBlock,
-									membershipSnapshot.getSnapshotId());
-
-							GossipMessage confirmationMessage = new GossipMessage(finalConfirmation);
-							for (BECPNode neighbor : peer.getNeighborsLocalCache()) {
-								if (neighbor.getNodeID() != peer.getNodeID()) {
-									peer.gossipMessage(confirmationMessage, neighbor);
-								}
-							}
 						}
 
 						int confirmationCount = peer.getFinalConfirmationCount(becpBlock.getHeight(), becpBlock);
@@ -1855,6 +1840,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setJoinedNodes(peer.getJoinedNodes())
                     		.setLocalLedger(updatedLedger)
 							.setRecoveryExchangeId(recoveryExchangeId)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(REAP_PLUS&&EMP_PLUS) {
@@ -1872,6 +1858,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setDonatedCache(donatedCache)
                     		.setMainCache_d(mainCache_d)
                     		.setRecoveryExchangeId(recoveryExchangeId)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(REAP&&NCP) {
@@ -1883,6 +1870,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setNeighborsLocalCache(copyNeighborCache)
                     		.setBlockLocalCache(copyBlockCache)
                     		.setCriticalPushFlag(peer.getCriticalPushFlag())
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(REAP&&EMP_PLUS) {
@@ -1897,6 +1885,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(d)
                     		.setDonatedCache(donatedCache)
                     		.setMainCache_d(mainCache_d)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(SSEP&&NCP) {
@@ -1908,6 +1897,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setWeight(peerWeight)
                     		.setNeighborsLocalCache(copyNeighborCache)
                     		.setBlockLocalCache(copyBlockCache)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), sender);
             
@@ -1922,6 +1912,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(d)
                     		.setDonatedCache(donatedCache)
                     		.setMainCache_d(mainCache_d)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         } else if(SSEP&&EMP) {
@@ -1934,6 +1925,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setBlockLocalCache(copyBlockCache)
                     		.setD(d)
                     		.setNeighborsLocalCache(copyNeighborCache)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPullGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), sender);
         }
@@ -1956,6 +1948,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setJoinedNodes(peer.getJoinedNodes())
                     		.setIsNewJoined(false)
 							.setRecoveryExchangeId(recoveryExchangeId)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(REAP_PLUS&&EMP_PLUS) {
@@ -1976,6 +1969,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setV_d(Integer.MAX_VALUE)
                     		.setH(0)
 							.setRecoveryExchangeId(recoveryExchangeId)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(REAP&&NCP) {
@@ -1988,6 +1982,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setNeighborsLocalCache(copyNeighborCache)
                     		.setBlockLocalCache(copyBlockCache)
                     		.setCriticalPushFlag(peer.getCriticalPushFlag())
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(REAP&&EMP_PLUS) {
@@ -2003,6 +1998,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(null)
                     		.setV_d(Integer.MAX_VALUE)
                     		.setH(0)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(SSEP&&NCP) {
@@ -2014,6 +2010,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setWeight(peerWeight)
                     		.setNeighborsLocalCache(copyNeighborCache)
                     		.setBlockLocalCache(copyBlockCache)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(peer, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         	
@@ -2029,6 +2026,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(null)
                     		.setV_d(Integer.MAX_VALUE)
                     		.setH(0)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         } else if(SSEP&&EMP) {
@@ -2043,6 +2041,7 @@ public class BECP<B extends SingleParentBlock<B>, T extends Tx<T>> extends Abstr
                     		.setD(null)
                     		.setV_d(Integer.MAX_VALUE)
                     		.setH(0)
+							.setFinalConfirmationBitmaps(peer.getFinalConfirmationBitmaps())
                     		.buildPushGossip(this.peerBlockchainNode, getSizeOfBlocks(copyBlockCache))
                     ), destination);
         }
