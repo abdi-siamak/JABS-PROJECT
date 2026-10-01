@@ -42,9 +42,7 @@ public class PerformanceScenario extends BECPScenario {
     public static final double DEFAULT_LOAD_DURATION = 180.0;
     public static final double DEFAULT_DRAIN = 40.0;
     public static final double DEFAULT_MONITOR_INTERVAL = 0.10;
-
     private static final int PROPOSER_ID = 0;
-
     private final long experimentSeed;
     private final int experimentNodes;
     private final double nominalLambda;
@@ -55,12 +53,9 @@ public class PerformanceScenario extends BECPScenario {
     private final double loadEnd;
     private final double experimentEnd;
     private final int quorumSize;
-
     private final Random workloadRandom;
     private final File experimentDirectory;
-
     private BECPNode proposer;
-
     private final LinkedHashMap<Integer, Double> generationTimes = new LinkedHashMap<>();
     private final LinkedHashMap<Integer, Hash> generatedHashes = new LinkedHashMap<>();
     private final LinkedHashMap<Integer, Double> quorumCommitTimes = new LinkedHashMap<>();
@@ -108,7 +103,7 @@ public class PerformanceScenario extends BECPScenario {
         this.workloadRandom = new Random(seed ^ 0x6A09E667F3BCC909L);
 
         this.experimentDirectory = new File(
-                "output/journal/performance/becp-reap-plus/nodes-" + nodes
+                "output/journal/performance/becp-reap-plus/nodes-" + nodes + "-"+lambdaDirectory(lambda)
                 + "/lambda-" + lambdaDirectory(lambda) + "/seed-" + seed);
 
         if (!experimentDirectory.exists() && !experimentDirectory.mkdirs()) {
