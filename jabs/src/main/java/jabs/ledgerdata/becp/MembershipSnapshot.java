@@ -3,7 +3,9 @@ package jabs.ledgerdata.becp;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.BitSet;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.HexFormat;
@@ -16,9 +18,8 @@ import java.util.HexFormat;
  * q_h     = strict-majority threshold: floor(|M_h| / 2) + 1
  */
 public final class MembershipSnapshot {
-
     private final int height;
-    private final Set<Integer> memberIds;
+    private final BitSet memberIds;
     private final String snapshotId;
     private final int quorumSize;
 
@@ -34,42 +35,38 @@ public final class MembershipSnapshot {
                     "Membership snapshot cannot be empty.");
         }
 
-        // TreeSet gives us a deterministic ordering of member IDs.
-        TreeSet<Integer> sortedMembers = new TreeSet<>(memberIds);
-
         this.height = height;
-        this.memberIds = Collections.unmodifiableSet(sortedMembers);
+        this.memberIds = new BitSet();
+        for (Integer memberId : memberIds) {
+            if (memberId == null || memberId < 0) {
+                throw new IllegalArgumentException("Membership IDs must be non-negative.");
+            }
+            this.memberIds.set(memberId);
+        }
 
-        // q_h = floor(|M_h| / 2) + 1
-        this.quorumSize = (sortedMembers.size() / 2) + 1;
-
-        // sigma_h uniquely identifies this height and membership snapshot.
-        this.snapshotId = computeSnapshotId(height, sortedMembers);
+        this.quorumSize = (this.memberIds.cardinality() / 2) + 1;
+        this.snapshotId = computeSnapshotId(height, this.memberIds);
     }
 
-    private static String computeSnapshotId(
-            int height,
-            Set<Integer> memberIds) {
-
+    private static String computeSnapshotId(int height, BitSet memberIds) {
         StringBuilder input = new StringBuilder();
-
         input.append(height).append(":");
+        for (int memberId = memberIds.nextSetBit(0);
+                memberId >= 0;
+                memberId = memberIds.nextSetBit(memberId + 1)) {
 
-        for (Integer memberId : memberIds) {
             input.append(memberId).append(",");
         }
 
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-
             byte[] hash = digest.digest(
                     input.toString().getBytes(StandardCharsets.UTF_8));
 
             return HexFormat.of().formatHex(hash);
 
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(
-                    "SHA-256 is not available.", e);
+            throw new IllegalStateException("SHA-256 is not available.", e);
         }
     }
 
@@ -78,7 +75,15 @@ public final class MembershipSnapshot {
     }
 
     public Set<Integer> getMemberIds() {
-        return memberIds;
+        HashSet<Integer> members = new HashSet<>();
+        for (int memberId = memberIds.nextSetBit(0);
+                memberId >= 0;
+                memberId = memberIds.nextSetBit(memberId + 1)) {
+
+            members.add(memberId);
+        }
+
+        return members;
     }
 
     public String getSnapshotId() {
@@ -90,6 +95,6 @@ public final class MembershipSnapshot {
     }
 
     public boolean containsMember(int nodeId) {
-        return memberIds.contains(nodeId);
+        return nodeId >= 0 && memberIds.get(nodeId);
     }
 }

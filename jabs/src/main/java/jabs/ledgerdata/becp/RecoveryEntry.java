@@ -109,4 +109,9 @@ public class RecoveryEntry {
 	public boolean isRecoveryExchangeTerminal() {
 		return recoveryExchangeState.isTerminal();
 	}
+
+	public void clearReplicaState() {
+		replicaBlockCache.clear();
+		incomingPushBlockCache.clear();
+	}
 }

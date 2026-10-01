@@ -48,12 +48,14 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 	private HashMap<Integer, MembershipSnapshot> membershipSnapshots; // fixed M_h for each unresolved height
 	private HashMap<Integer, Hash> persistentFinalVotes; // V_i(h): durable final vote per height
     private HashSet<Integer> unavailableFinalVoteHeights; // heights whose durable vote state could not be restored
-	private HashMap<Integer, HashMap<Hash, HashSet<Integer>>> finalConfirmations;
+	private HashMap<Integer, HashMap<Hash, BitSet>> finalConfirmations;
+	private HashMap<Integer, BECPConfirmationBitmap> finalConfirmationBitmapCache;
     private boolean criticalPushFlag; //(REAP protocol)
     private boolean convergenceFlag; //(REAP protocol)
     private ArrayList<PushEntry> pushEntriesBuffer; //(REAP & REAP+ protocols)
     private HashMap<Key, RecoveryEntry> recoveryCache; //keys:[Sender's Id, cycleNumber]-(REAP & REAP+ protocols)
 	private HashMap<RecoveryExchangeId, RecoveryEntry> recoveryExchangeCache; // REAP+ exact exchange tracking
+	private HashSet<RecoveryExchangeId> completedRecoveryExchanges = new HashSet<>();
 	private long recoveryExchangeSequence = 0; // persistent sender-local sequence for unique REAP+ exchange IDs
     private Queue<ArrayList<Double>> reapQueue; //(REAP)-the estimations queue.
     private Queue<ArrayList<Double>> ecpQueue; //(ECP)-the estimations queue.
@@ -86,6 +88,7 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 		this.persistentFinalVotes = new HashMap<>();
 		this.unavailableFinalVoteHeights = new HashSet<>();
 		this.finalConfirmations = new HashMap<>();
+		this.finalConfirmationBitmapCache = new HashMap<>();
         this.neighborsLocalCache = new ArrayList<>(); // is initialized while populating the network.
         this.localLedger = new LinkedHashSet<>();
         this.setLastConfirmedBlock(BECP_GENESIS_BLOCK);
@@ -283,7 +286,7 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 	 * @return true if this confirmer was added for the first time;
 	 *         false if the same confirmer was already counted.
 	 */
-    public boolean recordFinalConfirmation(int height, BECPBlock block, int confirmerNodeId) {
+	public boolean recordFinalConfirmation(int height, BECPBlock block, int confirmerNodeId) {
 		if (height < 1) {
 			throw new IllegalArgumentException("Final confirmation height must be greater than 0.");
 		}
@@ -297,28 +300,31 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 		}
 
 		Hash blockHash = block.getHash();
-		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.computeIfAbsent(height,key -> new HashMap<>());
-		/*
-		* A member may contribute at most one final confirmation at a given height.
-		* If this confirmer already appears under another block
-		* hash at the same height, that is an equivocation and
-		* therefore a safety violation.
-		*/
+		HashMap<Hash, BitSet> confirmationsAtHeight =
+				finalConfirmations.computeIfAbsent(height, key -> new HashMap<>());
+
 		for (Hash existingBlockHash : confirmationsAtHeight.keySet()) {
-			HashSet<Integer> existingConfirmers = confirmationsAtHeight.get(existingBlockHash);
-			if (existingConfirmers.contains(confirmerNodeId) && existingBlockHash != blockHash) {
+			BitSet existingConfirmers = confirmationsAtHeight.get(existingBlockHash);
+
+			if (existingConfirmers.get(confirmerNodeId) && existingBlockHash != blockHash) {
 				throw new IllegalStateException(
 						"Safety violation: node "
 						+ confirmerNodeId
-						+ " issued final confirmations for two "
-						+ "different blocks at height "
+						+ " issued final confirmations for two different blocks at height "
 						+ height
 						+ ".");
 			}
 		}
-		HashSet<Integer> confirmingNodes = confirmationsAtHeight.computeIfAbsent(blockHash, key -> new HashSet<>());
 
-		return confirmingNodes.add(confirmerNodeId);
+		BitSet confirmingNodes = confirmationsAtHeight.computeIfAbsent(blockHash, key -> new BitSet());
+
+		boolean alreadyConfirmed = confirmingNodes.get(confirmerNodeId);
+		confirmingNodes.set(confirmerNodeId);
+		if (!alreadyConfirmed) {
+			finalConfirmationBitmapCache.remove(height);
+		}
+
+		return !alreadyConfirmed;
 	}
 
 	/**
@@ -327,12 +333,12 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 	 */
 	public void clearVolatileFinalConfirmations() {
 		finalConfirmations.clear();
+		finalConfirmationBitmapCache.clear();
 
 		for (java.util.Map.Entry<Integer, Hash> persistentVote : persistentFinalVotes.entrySet()) {
-			HashSet<Integer> ownConfirmation = new HashSet<>();
-			ownConfirmation.add(getNodeID());
-
-			HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = new HashMap<>();
+			BitSet ownConfirmation = new BitSet();
+			ownConfirmation.set(getNodeID());
+			HashMap<Hash, BitSet> confirmationsAtHeight = new HashMap<>();
 			confirmationsAtHeight.put(persistentVote.getValue(), ownConfirmation);
 
 			finalConfirmations.put(persistentVote.getKey(), confirmationsAtHeight);
@@ -344,60 +350,62 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 			return 0;
 		}
 
-		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.get(height);
+		HashMap<Hash, BitSet> confirmationsAtHeight = finalConfirmations.get(height);
 
 		if (confirmationsAtHeight == null) {
 			return 0;
 		}
 
-		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
+		BitSet confirmingNodes = confirmationsAtHeight.get(block.getHash());
 
 		if (confirmingNodes == null) {
 			return 0;
 		}
 
-		return confirmingNodes.size();
+		return confirmingNodes.cardinality();
 	}
 
 	public BitSet getFinalConfirmationBitmap(int height, BECPBlock block) {
-		BitSet bitmap = new BitSet();
 		if (block == null) {
-			return bitmap;
+			return new BitSet();
 		}
 
-		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.get(height);
+		HashMap<Hash, BitSet> confirmationsAtHeight = finalConfirmations.get(height);
+
 		if (confirmationsAtHeight == null) {
-			return bitmap;
+			return new BitSet();
 		}
 
-		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
-		if (confirmingNodes != null) {
-			for (Integer nodeId : confirmingNodes) {
-				bitmap.set(nodeId);
-			}
+		BitSet confirmingNodes = confirmationsAtHeight.get(block.getHash());
+
+		if (confirmingNodes == null) {
+			return new BitSet();
 		}
 
-		return bitmap;
+		return (BitSet) confirmingNodes.clone();
 	}
 
 	public ArrayList<BECPConfirmationBitmap> getFinalConfirmationBitmaps() {
 		ArrayList<BECPConfirmationBitmap> bitmaps = new ArrayList<>();
 		for (BECPBlock block : blockLocalCache.values()) {
 			BitSet bitmap = getFinalConfirmationBitmap(block.getHeight(), block);
+
 			if (bitmap.isEmpty()) {
 				continue;
 			}
-
 			MembershipSnapshot snapshot = getMembershipSnapshot(block.getHeight());
+
 			if (snapshot == null) {
 				continue;
 			}
+			BECPConfirmationBitmap cached = finalConfirmationBitmapCache.get(block.getHeight());
 
-			bitmaps.add(new BECPConfirmationBitmap(
-					block.getHeight(),
-					block.getHash(),
-					snapshot.getSnapshotId(),
-					bitmap));
+			if (cached == null || cached.getBlockHash() != block.getHash() || !cached.getSnapshotId().equals(snapshot.getSnapshotId())) {
+				cached = new BECPConfirmationBitmap(block.getHeight(), block.getHash(), snapshot.getSnapshotId(), bitmap);
+				finalConfirmationBitmapCache.put(block.getHeight(), cached);
+			}
+
+			bitmaps.add(cached);
 		}
 
 		return bitmaps;
@@ -437,14 +445,15 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 			return false;
 		}
 
-		HashMap<Hash, HashSet<Integer>> confirmationsAtHeight = finalConfirmations.get(height);
+		HashMap<Hash, BitSet> confirmationsAtHeight = finalConfirmations.get(height);
+
 		if (confirmationsAtHeight == null) {
 			return false;
 		}
 
-		HashSet<Integer> confirmingNodes = confirmationsAtHeight.get(block.getHash());
-		
-		return confirmingNodes != null && confirmingNodes.contains(confirmerNodeId);
+		BitSet confirmingNodes = confirmationsAtHeight.get(block.getHash());
+
+		return confirmingNodes != null && confirmingNodes.get(confirmerNodeId);
 	}
 
     /**
@@ -462,6 +471,18 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
     public HashMap<Key, RecoveryEntry> getRecoveryCache(){ return recoveryCache; }
 	public HashMap<RecoveryExchangeId, RecoveryEntry> getRecoveryExchangeCache() {
     	return recoveryExchangeCache;
+	}
+	public boolean isRecoveryExchangeCompleted(RecoveryExchangeId exchangeId) {
+    return exchangeId != null
+            && completedRecoveryExchanges.contains(exchangeId);
+}
+
+	public void markRecoveryExchangeCompleted(RecoveryExchangeId exchangeId) {
+		if (exchangeId == null) {
+			throw new IllegalArgumentException("Recovery exchange ID cannot be null.");
+		}
+
+		completedRecoveryExchanges.add(exchangeId);
 	}
 	public RecoveryExchangeId createRecoveryExchangeId() {
 		RecoveryExchangeId exchangeId = new RecoveryExchangeId(getNodeID(), getCycleNumber(), recoveryExchangeSequence);
@@ -495,11 +516,17 @@ public class BECPNode extends PeerBlockchainNode<BECPBlock, BECPTx>{
 		}
 
 		if (recoveryExchangeCache != null) {
-			for (RecoveryEntry recoveryEntry : recoveryExchangeCache.values()) {
+			for (java.util.Map.Entry<RecoveryExchangeId, RecoveryEntry> entry : recoveryExchangeCache.entrySet()) {
+				RecoveryEntry recoveryEntry = entry.getValue();
 				if (!recoveryEntry.isRecoveryExchangeTerminal()) {
-					recoveryEntry.transitionRecoveryExchangeState(RecoveryExchangeState.RESTORED);
+					recoveryEntry.transitionRecoveryExchangeState(
+							RecoveryExchangeState.RESTORED);
 				}
+
+				markRecoveryExchangeCompleted(entry.getKey());
 			}
+
+			recoveryExchangeCache.clear();
 		}
 	}
     public Queue<ArrayList<Double>> getReapQueue(){return reapQueue; }
